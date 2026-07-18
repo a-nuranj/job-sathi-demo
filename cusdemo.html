@@ -24,20 +24,22 @@
             const [activeTab, setActiveTab] = useState('home'); 
             const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-            // Home Tab Multi-Step Flow ('list', 'form', 'estimate')
+            // Home Tab Multi-Step Flow ('list', 'form', 'voice', 'estimate')
             const [homeView, setHomeView] = useState('list'); 
 
             // User & Data States
             const [customerData, setCustomerData] = useState({ name: 'Guest User', username: 'guest_user', phone: '', address: 'New Delhi, India' });
             const [signupForm, setSignupForm] = useState({ name: '', username: '', phone: '', address: '' });
             
-            // Profile Editing States
             const [isEditingProfile, setIsEditingProfile] = useState(false);
             const [editForm, setEditForm] = useState(customerData);
 
             // Service & Request States
             const [activeRequests, setActiveRequests] = useState([]);
             const [newService, setNewService] = useState({ type: '', date: '', details: '', photoName: '' });
+            
+            // Voice State
+            const [isListening, setIsListening] = useState(false);
 
             // Location States & Dropdown Options
             const [userLocation, setUserLocation] = useState(customerData.address);
@@ -46,11 +48,9 @@
                 "Chennai, India", "Kolkata, India", "Hyderabad, India", 
                 "Pune, India", "Ahmedabad, India"
             ];
-            
-            // Ensure the currently detected/selected location is always in the dropdown list
             const displayLocations = [...new Set([userLocation, ...commonLocations])];
 
-            // Upgraded Estimation Engine (Converted to State for AI Updates)
+            // Upgraded Estimation Engine
             const [serviceEstimates, setServiceEstimates] = useState({
                 Plumber: { cost: '₹600 - ₹800', time: '2 - 4 Hours' },
                 Electrician: { cost: '₹700 - ₹900', time: '1 - 3 Hours' },
@@ -100,44 +100,60 @@
                 handleConfirmJob();
             };
 
-            // 📍 REAL Geolocation & Reverse Geocoding (Locality & District)
+            // 🎤 NATIVE WEB SPEECH API FUNCTION FOR SERVICE REQUESTS
+            const startServiceVoiceInput = () => {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                
+                if (!SpeechRecognition) {
+                    alert("Your browser does not support Voice Recognition. Please use Google Chrome or Edge.");
+                    return;
+                }
+
+                const recognition = new SpeechRecognition();
+                recognition.lang = 'en-IN'; // Indian context
+                recognition.interimResults = true;
+
+                recognition.onstart = () => setIsListening(true);
+
+                recognition.onresult = (event) => {
+                    let transcript = Array.from(event.results)
+                        .map(result => result[0].transcript)
+                        .join('');
+                    setNewService(prev => ({ ...prev, details: transcript }));
+                };
+
+                recognition.onerror = () => setIsListening(false);
+                recognition.onend = () => setIsListening(false);
+                
+                recognition.start();
+            };
+
+            // 📍 REAL Geolocation & Reverse Geocoding
             const handleDetectLocation = () => {
                 setUserLocation("Detecting...");
-                
                 if ("geolocation" in navigator) {
                     navigator.geolocation.getCurrentPosition(
                         async (position) => {
                             try {
                                 const { latitude, longitude } = position.coords;
-                                // Ping the free OpenStreetMap API
                                 const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
                                 const data = await res.json();
-                                
-                                // 1. Try to find the local neighborhood, suburb, or village
                                 const locality = data.address.neighbourhood || data.address.suburb || data.address.residential || data.address.village || data.address.town;
-                                
-                                // 2. Grab the official district
                                 const district = data.address.state_district || data.address.county || data.address.city_district || data.address.city;
                                 
-                                // 3. Format the text for the UI
                                 if (locality && district && locality !== district) {
-                                    // If we have both and they are different: "Kakkanad, Ernakulam"
                                     setUserLocation(`${locality}, ${district} (Detected)`);
                                 } else if (locality || district) {
-                                    // Fallback if one is missing
                                     setUserLocation(`${locality || district} (Detected)`);
                                 } else {
                                     setUserLocation("Location Found, but area unknown");
                                 }
-                                
                             } catch (err) {
                                 console.error(err);
                                 setUserLocation("Error reading GPS data");
                             }
                         },
-                        (error) => {
-                            setUserLocation("GPS Permission Denied");
-                        },
+                        (error) => { setUserLocation("GPS Permission Denied"); },
                         { enableHighAccuracy: true, timeout: 5000 }
                     );
                 } else {
@@ -156,7 +172,6 @@
 
                 setHomeView('estimate');
                 
-                // Set a temporary loading state while Gemini thinks
                 setServiceEstimates(prev => ({
                     ...prev,
                     [newService.type]: { cost: 'Calculating...', time: 'Analyzing details...' }
@@ -165,7 +180,6 @@
                 const API_KEY = 'gen-lang-client-0374876569'; 
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
 
-                // The Prompt Engineering: We force Gemini to output strict JSON
                 const prompt = `
                     You are an expert blue-collar job estimator in India. 
                     A customer needs a ${newService.type}. 
@@ -179,21 +193,15 @@
                     const response = await fetch(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: [{ parts: [{ text: prompt }] }]
-                        })
+                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
                     });
 
                     const data = await response.json();
-                    
                     let aiText = data.candidates[0].content.parts[0].text;
                     aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
                     const aiEstimate = JSON.parse(aiText);
 
-                    setServiceEstimates(prev => ({
-                        ...prev,
-                        [newService.type]: aiEstimate
-                    }));
+                    setServiceEstimates(prev => ({ ...prev, [newService.type]: aiEstimate }));
 
                 } catch (error) {
                     console.error("Gemini AI Error:", error);
@@ -204,7 +212,6 @@
                 }
             };
 
-            // Final Confirmation & Job Posting
             const handleConfirmJob = () => {
                 const newId = Date.now();
                 setActiveRequests([{ id: newId, ...newService, status: 'Searching for workers...', location: userLocation }, ...activeRequests]);
@@ -213,14 +220,11 @@
 
                 setTimeout(() => {
                     setActiveRequests(current => 
-                        current.map(req => 
-                            req.id === newId ? { ...req, status: 'Worker Found & Confirmed!' } : req
-                        )
+                        current.map(req => req.id === newId ? { ...req, status: 'Worker Found & Confirmed!' } : req)
                     );
                 }, 5000);
             };
 
-            // Handle fake photo upload
             const handlePhotoUpload = (e) => {
                 if(e.target.files.length > 0) {
                     setNewService({...newService, photoName: e.target.files[0].name});
@@ -289,28 +293,11 @@
                             <h2 className="text-2xl font-extrabold text-blue-900">Menu</h2>
                         </div>
                         <nav className="p-4 space-y-2">
-                            <button 
-                                onClick={() => { setActiveTab('home'); setHomeView('list'); setIsSidebarOpen(false); setIsEditingProfile(false); }}
-                                className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'home' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
-                            >
-                                🏠 Home
-                            </button>
-                            <button 
-                                onClick={() => { setActiveTab('recent'); setIsSidebarOpen(false); setIsEditingProfile(false); }}
-                                className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'recent' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
-                            >
-                                🕒 Recent Services
-                            </button>
-                            <button 
-                                onClick={() => { setActiveTab('profile'); setIsSidebarOpen(false); }}
-                                className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'profile' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
-                            >
-                                👤 Profile
-                            </button>
+                            <button onClick={() => { setActiveTab('home'); setHomeView('list'); setIsSidebarOpen(false); setIsEditingProfile(false); }} className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'home' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}>🏠 Home</button>
+                            <button onClick={() => { setActiveTab('recent'); setIsSidebarOpen(false); setIsEditingProfile(false); }} className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'recent' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}>🕒 Recent Services</button>
+                            <button onClick={() => { setActiveTab('profile'); setIsSidebarOpen(false); }} className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'profile' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}>👤 Profile</button>
                             <div className="pt-4 mt-4 border-t border-gray-100">
-                                <button onClick={handleLogout} className="w-full text-left px-4 py-3 rounded-lg font-bold text-red-600 hover:bg-red-50 transition-all">
-                                    🚪 Log Out
-                                </button>
+                                <button onClick={handleLogout} className="w-full text-left px-4 py-3 rounded-lg font-bold text-red-600 hover:bg-red-50 transition-all">🚪 Log Out</button>
                             </div>
                         </nav>
                     </div>
@@ -366,54 +353,155 @@
                         {activeTab === 'home' && (
                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 min-h-[500px]">
                                 
-                                {/* Step 1: List View */}
+                                {/* Step 1: Merged Dashboard View Split Layout (Options Left, Requests Right) */}
                                 {homeView === 'list' && (
-                                    <>
-                                        <div className="flex justify-between items-center mb-8 pb-4 border-b border-gray-100">
-                                            <h2 className="text-2xl font-bold text-gray-800">Your Active Requests</h2>
-                                            <button onClick={() => setHomeView('form')} className="bg-blue-600 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-blue-700 transition shadow-md flex items-center space-x-2">
-                                                <span>+ Request Service</span>
-                                            </button>
+                                    <div className="animate-fade-in grid grid-cols-1 lg:grid-cols-2 gap-10">
+                                        
+                                        {/* Left Side: New Request Section */}
+                                        <div>
+                                            <h2 className="text-2xl font-bold text-gray-800 mb-6 border-b border-gray-100 pb-4">Create New Request</h2>
+                                            
+                                            <div className="text-center mb-8 mt-4">
+                                                <h3 className="text-xl font-extrabold text-gray-900 mb-2">How would you like to request service?</h3>
+                                                <p className="text-gray-500 text-sm">Choose the method that is most comfortable for you.</p>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                                {/* Voice Card */}
+                                                <button onClick={() => setHomeView('voice')} className="bg-white border-2 border-blue-50 hover:border-blue-300 rounded-2xl p-6 flex flex-col items-center text-center transition-all hover:shadow-md group">
+                                                    <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                                                        <span className="text-3xl">🎤</span>
+                                                    </div>
+                                                    <h4 className="text-lg font-bold text-gray-900 mb-1">Voice Assistant</h4>
+                                                    <p className="text-gray-500 text-xs">Speak your request naturally for a hands-free experience.</p>
+                                                </button>
+
+                                                {/* Manual Form Card */}
+                                                <button onClick={() => setHomeView('form')} className="bg-white border-2 border-green-50 hover:border-green-300 rounded-2xl p-6 flex flex-col items-center text-center transition-all hover:shadow-md group">
+                                                    <div className="bg-green-50 w-16 h-16 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                                                        <span className="text-3xl">✍️</span>
+                                                    </div>
+                                                    <h4 className="text-lg font-bold text-gray-900 mb-1">Manual Form</h4>
+                                                    <p className="text-gray-500 text-xs">Type out your details manually using a standard form.</p>
+                                                </button>
+                                            </div>
                                         </div>
 
-                                        {activeRequests.length === 0 ? (
-                                            <div className="text-center text-gray-400 mt-20">
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto mb-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-                                                <p>You have no active service requests.</p>
-                                                <p className="text-sm mt-1">Click the button above to hire someone.</p>
-                                            </div>
-                                        ) : (
-                                            <div className="space-y-4">
-                                                {activeRequests.map((req) => (
-                                                    <div key={req.id} className="border border-gray-200 rounded-xl p-5 flex flex-col md:flex-row justify-between items-center bg-gray-50 shadow-sm">
-                                                        <div className="w-full md:w-auto mb-4 md:mb-0">
-                                                            <div className="flex items-center space-x-3 mb-1">
-                                                                <h3 className="font-extrabold text-xl text-gray-900">{req.type}</h3>
-                                                                <span className="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-1 rounded">Date: {req.date}</span>
+                                        {/* Mobile separator */}
+                                        <div className="block lg:hidden border-t border-gray-100 my-2"></div>
+
+                                        {/* Right Side: Active Requests Section */}
+                                        <div>
+                                            <h2 className="text-2xl font-bold text-gray-800 mb-6 border-b border-gray-100 pb-4">Your Active Requests</h2>
+                                            
+                                            {activeRequests.length === 0 ? (
+                                                <div className="text-center text-gray-400 py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                                                    <p className="font-semibold text-gray-500">No active requests.</p>
+                                                    <p className="text-xs mt-1">Use the options on the left to hire someone.</p>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+                                                    {activeRequests.map((req) => (
+                                                        <div key={req.id} className="border border-gray-200 rounded-xl p-5 flex flex-col justify-between items-start bg-white shadow-sm hover:shadow-md transition">
+                                                            <div className="w-full flex justify-between items-center mb-2">
+                                                                <h3 className="font-extrabold text-lg text-gray-900">{req.type}</h3>
+                                                                <span className="text-xs font-bold bg-blue-50 text-blue-700 px-2 py-1 rounded">Date: {req.date}</span>
                                                             </div>
-                                                            <p className="text-sm text-gray-500 font-semibold mb-1">📍 {req.location}</p>
-                                                            <p className="text-sm text-gray-700 mb-2">{req.details}</p>
-                                                            {req.photoName && (
-                                                                <p className="text-xs text-blue-500 font-semibold flex items-center">
-                                                                    📎 Attached: {req.photoName}
-                                                                </p>
-                                                            )}
+                                                            <p className="text-xs text-gray-500 font-semibold mb-2">📍 {req.location}</p>
+                                                            <p className="text-sm text-gray-700 mb-3">{req.details}</p>
+                                                            <div className="w-full flex justify-between items-center mt-auto">
+                                                                {req.photoName ? (
+                                                                    <p className="text-xs text-blue-500 font-semibold flex items-center">📎 {req.photoName}</p>
+                                                                ) : (
+                                                                    <span></span>
+                                                                )}
+                                                                <span className={`px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm ${req.status.includes('Confirmed') ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800 animate-pulse border border-yellow-200'}`}>
+                                                                    {req.status}
+                                                                </span>
+                                                            </div>
                                                         </div>
-                                                        <span className={`px-5 py-2.5 rounded-lg text-sm font-bold w-full md:w-auto text-center shadow-sm ${req.status.includes('Confirmed') ? 'bg-green-500 text-white' : 'bg-yellow-100 text-yellow-800 animate-pulse border border-yellow-300'}`}>
-                                                            {req.status}
-                                                        </span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
                                 )}
 
-                                {/* Step 2: Request Form View */}
-                                {homeView === 'form' && (
-                                    <div className="max-w-2xl mx-auto">
+                                {/* Step 2A: Voice Request Form */}
+                                {homeView === 'voice' && (
+                                    <div className="max-w-2xl mx-auto py-4 animate-fade-in">
                                         <div className="flex items-center mb-6">
-                                            <button onClick={() => setHomeView('list')} className="text-gray-500 hover:text-blue-700 font-bold mr-4 bg-gray-100 hover:bg-blue-50 px-4 py-2 rounded-lg transition">
+                                            <button onClick={() => setHomeView('list')} className="text-gray-500 hover:text-gray-700 font-semibold bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-lg transition text-sm flex items-center">
+                                                ← Back to Dashboard
+                                            </button>
+                                        </div>
+                                        
+                                        <div className="text-center mb-8">
+                                            <h2 className="text-3xl font-extrabold text-gray-900 mb-2">Voice Assistant</h2>
+                                            <p className="text-gray-500">Tap the mic and tell us what you need.</p>
+                                        </div>
+
+                                        <div className="bg-white border border-gray-100 p-8 rounded-3xl shadow-sm text-center">
+                                            <button 
+                                                type="button" 
+                                                onClick={startServiceVoiceInput} 
+                                                className={`w-32 h-32 rounded-full flex items-center justify-center mx-auto mb-8 transition-all shadow-lg ${isListening ? 'bg-red-500 animate-pulse scale-110' : 'bg-blue-600 hover:bg-blue-700'}`}
+                                            >
+                                                <span className="text-6xl text-white">🎤</span>
+                                            </button>
+                                            
+                                            {isListening && <p className="text-red-500 font-bold mb-4 animate-pulse">Listening...</p>}
+
+                                            <div className="space-y-6 text-left">
+                                                <div>
+                                                    <label className="block text-sm font-semibold text-gray-700 mb-2">I heard:</label>
+                                                    <textarea 
+                                                        value={newService.details} 
+                                                        onChange={(e) => setNewService({...newService, details: e.target.value})} 
+                                                        className="w-full rounded-xl border-gray-300 border p-4 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" 
+                                                        rows="3" 
+                                                        placeholder="Your spoken request will appear here... you can also type to edit it."
+                                                    ></textarea>
+                                                </div>
+                                                
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    <div>
+                                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Select Skill Category</label>
+                                                        <input 
+                                                            type="text" 
+                                                            required 
+                                                            list="skills-list"
+                                                            value={newService.type} 
+                                                            onChange={(e) => setNewService({...newService, type: e.target.value})} 
+                                                            className="w-full rounded-xl border-gray-300 border p-4 focus:ring-2 focus:ring-blue-500 outline-none bg-white shadow-sm"
+                                                            placeholder="Select or type..."
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-sm font-semibold text-gray-700 mb-2">When?</label>
+                                                        <input type="date" required value={newService.date} onChange={(e) => setNewService({...newService, date: e.target.value})} className="w-full rounded-xl border-gray-300 border p-4 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />
+                                                    </div>
+                                                </div>
+
+                                                <div className="pt-4 flex flex-col md:flex-row gap-4">
+                                                    <button onClick={handleNextStep} className="flex-1 bg-blue-50 text-blue-700 border-2 border-blue-200 p-4 rounded-xl font-bold hover:bg-blue-100 transition shadow-sm text-lg flex justify-center items-center space-x-2">
+                                                        <span>✨ Get AI Estimate</span>
+                                                    </button>
+                                                    <button onClick={handleDirectSubmit} className="flex-1 bg-green-600 text-white p-4 rounded-xl font-bold hover:bg-green-700 transition shadow-md text-lg flex justify-center items-center">
+                                                        <span>Post Job Directly</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Step 2B: Manual Request Form View */}
+                                {homeView === 'form' && (
+                                    <div className="max-w-2xl mx-auto animate-fade-in">
+                                        <div className="flex items-center mb-6">
+                                            <button onClick={() => setHomeView('list')} className="text-gray-500 hover:text-gray-700 font-semibold bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-lg transition text-sm flex items-center">
                                                 ← Back to Dashboard
                                             </button>
                                         </div>
@@ -422,14 +510,22 @@
 
                                         <form onSubmit={handleDirectSubmit} className="space-y-6">
                                             <div>
-                                                <select required value={newService.type} onChange={(e) => setNewService({...newService, type: e.target.value})} className="w-full rounded-xl border-gray-300 border p-4 focus:ring-2 focus:ring-blue-500 outline-none bg-white shadow-sm">
-                                                    <option value="">Select a skill...</option>
-                                                    <option value="Plumber">Plumbing / Pipe Fitting</option>
-                                                    <option value="Electrician">Electrician / Wiring</option>
-                                                    <option value="Mason">Masonry / Construction</option>
-                                                    <option value="Carpenter">Carpentry / Woodwork</option>
-                                                    <option value="Painter">Painting</option>
-                                                </select>
+                                                <input 
+                                                    type="text" 
+                                                    required 
+                                                    list="skills-list"
+                                                    value={newService.type} 
+                                                    onChange={(e) => setNewService({...newService, type: e.target.value})} 
+                                                    className="w-full rounded-xl border-gray-300 border p-4 focus:ring-2 focus:ring-blue-500 outline-none bg-white shadow-sm"
+                                                    placeholder="Select or type a skill (e.g. Plumber, AC Repair...)"
+                                                />
+                                                <datalist id="skills-list">
+                                                    <option value="Plumber" />
+                                                    <option value="Electrician" />
+                                                    <option value="Mason" />
+                                                    <option value="Carpenter" />
+                                                    <option value="Painter" />
+                                                </datalist>
                                             </div>
 
                                             <div>
@@ -455,7 +551,6 @@
                                                 </div>
                                             </div>
 
-                                            {/* Dual Buttons */}
                                             <div className="flex flex-col md:flex-row gap-4 pt-2">
                                                 <button type="button" onClick={handleNextStep} className="flex-1 bg-blue-50 text-blue-700 border-2 border-blue-200 p-4 rounded-xl font-bold hover:bg-blue-100 transition shadow-sm text-lg flex justify-center items-center space-x-2">
                                                     <span>✨ Get AI Estimate</span>
@@ -470,7 +565,7 @@
 
                                 {/* Step 3: Estimate & Confirmation View */}
                                 {homeView === 'estimate' && (
-                                    <div className="max-w-xl mx-auto text-center py-8">
+                                    <div className="max-w-xl mx-auto text-center py-8 animate-fade-in">
                                         <div className="bg-blue-50 rounded-full w-24 h-24 flex items-center justify-center mx-auto mb-6">
                                             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -500,7 +595,7 @@
                                         </div>
 
                                         <div className="flex flex-col md:flex-row gap-4">
-                                            <button onClick={() => setHomeView('form')} className="flex-1 bg-white border-2 border-gray-200 text-gray-600 p-4 rounded-xl font-bold hover:bg-gray-50 transition shadow-sm text-lg">
+                                            <button onClick={() => setHomeView('list')} className="flex-1 bg-white border-2 border-gray-200 text-gray-600 p-4 rounded-xl font-bold hover:bg-gray-50 transition shadow-sm text-lg">
                                                 Go Back
                                             </button>
                                             <button onClick={handleConfirmJob} className="flex-[2] w-full bg-green-600 text-white p-4 rounded-xl font-bold hover:bg-green-700 transition shadow-lg text-lg flex justify-center items-center space-x-2">
@@ -593,6 +688,19 @@
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
+        
+        // Add a simple fade-in animation style globally
+        const style = document.createElement('style');
+        style.innerHTML = `
+            .animate-fade-in {
+                animation: fadeIn 0.3s ease-in-out;
+            }
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+        `;
+        document.head.appendChild(style);
     </script>
 </body>
 </html>
