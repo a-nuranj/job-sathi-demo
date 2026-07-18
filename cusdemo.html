@@ -21,16 +21,30 @@
             const [currentView, setCurrentView] = useState('login'); 
             
             // Dashboard navigation states
-            const [activeTab, setActiveTab] = useState('home'); // 'home', 'recent', 'profile'
+            const [activeTab, setActiveTab] = useState('home'); 
             const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
             // User & Data States
-            const [customerData, setCustomerData] = useState({ name: 'Guest', phone: '', address: 'Default Address' });
-            const [signupForm, setSignupForm] = useState({ name: '', phone: '', address: '' });
+            const [customerData, setCustomerData] = useState({ name: 'Guest User', username: 'guest_user', phone: '', address: 'Default Address' });
+            const [signupForm, setSignupForm] = useState({ name: '', username: '', phone: '', address: '' });
+            
+            // Profile Editing States
+            const [isEditingProfile, setIsEditingProfile] = useState(false);
+            const [editForm, setEditForm] = useState(customerData);
+
+            // Service & Request States
             const [activeRequests, setActiveRequests] = useState([]);
             const [newService, setNewService] = useState({ type: '', date: '', details: '' });
 
-            // Mock Data for "Recent" Tab
+            // Market Rates Dictionary
+            const marketRates = {
+                Plumber: '₹600 - ₹800/day',
+                Electrician: '₹700 - ₹900/day',
+                Mason: '₹800 - ₹1000/day',
+                Carpenter: '₹750 - ₹950/day',
+                Painter: '₹500 - ₹700/day'
+            };
+
             const pastServices = [
                 { id: 101, type: 'Electrician', date: '2026-06-15', status: 'Completed', worker: 'Raju Bhai', rating: '⭐️⭐️⭐️⭐️' },
                 { id: 102, type: 'Painter', date: '2026-05-10', status: 'Completed', worker: 'Suresh Kumar', rating: '⭐️⭐️⭐️⭐️⭐️' }
@@ -39,20 +53,28 @@
             const handleSignup = (e) => {
                 e.preventDefault();
                 setCustomerData(signupForm);
+                setEditForm(signupForm);
                 setCurrentView('dashboard');
                 setActiveTab('home');
             };
 
             const handleLogin = (e) => {
                 e.preventDefault();
+                setEditForm(customerData);
                 setCurrentView('dashboard');
                 setActiveTab('home');
             };
 
             const handleLogout = () => {
                 setCurrentView('login');
-                setCustomerData({ name: 'Guest', phone: '', address: 'Default Address' });
+                setCustomerData({ name: 'Guest User', username: 'guest_user', phone: '', address: 'Default Address' });
                 setIsSidebarOpen(false);
+            };
+
+            const handleSaveProfile = (e) => {
+                e.preventDefault();
+                setCustomerData(editForm);
+                setIsEditingProfile(false);
             };
 
             const handlePostService = (e) => {
@@ -77,7 +99,7 @@
                         <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-100 text-center">
                             <h1 className="text-4xl font-extrabold text-blue-900 tracking-tight mb-8">Job Saathi</h1>
                             <form onSubmit={handleLogin} className="space-y-4 text-left">
-                                <input type="text" required className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="User ID / Phone" />
+                                <input type="text" required className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Username / Phone" />
                                 <input type="password" required className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Password" />
                                 <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition shadow-md">Login</button>
                             </form>
@@ -94,10 +116,23 @@
                             <button onClick={() => setCurrentView('login')} className="absolute top-6 left-6 text-gray-400 hover:text-blue-600 text-sm font-semibold">← Back</button>
                             <h2 className="text-2xl font-extrabold text-gray-800 text-center mb-6 mt-4">Create Account</h2>
                             <form onSubmit={handleSignup} className="space-y-4">
-                                <input type="text" required value={signupForm.name} onChange={(e) => setSignupForm({...signupForm, name: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Full Name" />
-                                <input type="tel" required value={signupForm.phone} onChange={(e) => setSignupForm({...signupForm, phone: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Phone Number" />
-                                <textarea required value={signupForm.address} onChange={(e) => setSignupForm({...signupForm, address: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="2" placeholder="Complete Address"></textarea>
-                                <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition">Register</button>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Full Name</label>
+                                    <input type="text" required value={signupForm.name} onChange={(e) => setSignupForm({...signupForm, name: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g. Ramesh Kumar" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Username (Must be unique)</label>
+                                    <input type="text" required value={signupForm.username} onChange={(e) => setSignupForm({...signupForm, username: e.target.value.toLowerCase().replace(/\s+/g, '')})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g. ramesh_kumar99" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Phone Number</label>
+                                    <input type="tel" required value={signupForm.phone} onChange={(e) => setSignupForm({...signupForm, phone: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="+91" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Complete Address</label>
+                                    <textarea required value={signupForm.address} onChange={(e) => setSignupForm({...signupForm, address: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="2" placeholder="House/Flat No, Street..."></textarea>
+                                </div>
+                                <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition mt-2">Register</button>
                             </form>
                         </div>
                     </div>
@@ -108,12 +143,9 @@
             return (
                 <div className="min-h-screen flex relative overflow-hidden bg-gray-50">
                     
-                    {/* Dark Overlay when sidebar is open (Mobile friendly) */}
+                    {/* Dark Overlay when sidebar is open */}
                     {isSidebarOpen && (
-                        <div 
-                            className="fixed inset-0 bg-black bg-opacity-50 z-40 transition-opacity"
-                            onClick={() => setIsSidebarOpen(false)}
-                        ></div>
+                        <div className="fixed inset-0 bg-black bg-opacity-50 z-40 transition-opacity" onClick={() => setIsSidebarOpen(false)}></div>
                     )}
 
                     {/* Sidebar / Drawer */}
@@ -123,13 +155,13 @@
                         </div>
                         <nav className="p-4 space-y-2">
                             <button 
-                                onClick={() => { setActiveTab('home'); setIsSidebarOpen(false); }}
+                                onClick={() => { setActiveTab('home'); setIsSidebarOpen(false); setIsEditingProfile(false); }}
                                 className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'home' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
                             >
                                 🏠 Home
                             </button>
                             <button 
-                                onClick={() => { setActiveTab('recent'); setIsSidebarOpen(false); }}
+                                onClick={() => { setActiveTab('recent'); setIsSidebarOpen(false); setIsEditingProfile(false); }}
                                 className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'recent' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
                             >
                                 🕒 Recent Services
@@ -141,10 +173,7 @@
                                 👤 Profile
                             </button>
                             <div className="pt-4 mt-4 border-t border-gray-100">
-                                <button 
-                                    onClick={handleLogout}
-                                    className="w-full text-left px-4 py-3 rounded-lg font-bold text-red-600 hover:bg-red-50 transition-all"
-                                >
+                                <button onClick={handleLogout} className="w-full text-left px-4 py-3 rounded-lg font-bold text-red-600 hover:bg-red-50 transition-all">
                                     🚪 Log Out
                                 </button>
                             </div>
@@ -154,32 +183,32 @@
                     {/* Main Content Area */}
                     <div className="flex-1 p-8 max-w-6xl mx-auto w-full transition-all duration-300">
                         
-                        {/* Header with Hamburger */}
+                        {/* Dynamic Header */}
                         <header className="mb-8 flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                             <div className="flex items-center space-x-4">
-                                {/* Hamburger Button */}
-                                <button 
-                                    onClick={() => setIsSidebarOpen(true)}
-                                    className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg focus:outline-none"
-                                >
+                                <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg focus:outline-none">
                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                                     </svg>
                                 </button>
-                                <div>
-                                    <h1 className="text-3xl font-extrabold text-blue-900 tracking-tight">Job Saathi</h1>
-                                    <p className="text-gray-500 text-lg mt-1">Welcome back, <span className="font-semibold text-gray-800">{customerData.name}</span></p>
-                                    <p className="text-sm text-gray-400">Service Location: {customerData.address}</p>
-                                </div>
+                                
+                                {/* Header content changes based on active tab */}
+                                {activeTab === 'profile' ? (
+                                    <div>
+                                        <h1 className="text-3xl font-extrabold text-blue-900 tracking-tight">My Profile</h1>
+                                        <p className="text-gray-500 text-lg mt-1">Username: <span className="font-semibold text-blue-600">@{customerData.username}</span></p>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <h1 className="text-3xl font-extrabold text-blue-900 tracking-tight">Job Saathi</h1>
+                                        <p className="text-gray-500 text-lg mt-1">Welcome back, <span className="font-semibold text-gray-800">{customerData.name}</span></p>
+                                        <p className="text-sm text-gray-400">Service Location: {customerData.address}</p>
+                                    </div>
+                                )}
                             </div>
-                            <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 font-semibold px-4 border border-gray-200 rounded-lg py-2 hover:bg-red-50 hidden md:block transition">
-                                Log Out
-                            </button>
                         </header>
 
-                        {/* --- TAB ROUTING LOGIC --- */}
-                        
-                        {/* TAB: HOME (The original dashboard) */}
+                        {/* --- TAB: HOME --- */}
                         {activeTab === 'home' && (
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                                 <div className="col-span-1">
@@ -188,12 +217,21 @@
                                         <form onSubmit={handlePostService} className="space-y-4">
                                             <div>
                                                 <label className="block text-sm font-semibold text-gray-700 mb-1">What service do you need?</label>
-                                                <select required value={newService.type} onChange={(e) => setNewService({...newService, type: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none">
+                                                <select required value={newService.type} onChange={(e) => setNewService({...newService, type: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none bg-white">
                                                     <option value="">Select a skill...</option>
                                                     <option value="Plumber">Plumbing / Pipe Fitting</option>
                                                     <option value="Electrician">Electrician / Wiring</option>
                                                     <option value="Mason">Masonry / Construction</option>
+                                                    <option value="Carpenter">Carpentry / Woodwork</option>
+                                                    <option value="Painter">Painting</option>
                                                 </select>
+                                                
+                                                {/* Market Rate Calculator Widget */}
+                                                {newService.type && (
+                                                    <p className="text-sm text-blue-600 mt-2 bg-blue-50 p-2 rounded-md border border-blue-100">
+                                                        💡 Suggested Market Rate: <span className="font-bold">{marketRates[newService.type]}</span>
+                                                    </p>
+                                                )}
                                             </div>
                                             <div>
                                                 <label className="block text-sm font-semibold text-gray-700 mb-1">When do you need them?</label>
@@ -240,7 +278,7 @@
                             </div>
                         )}
 
-                        {/* TAB: RECENT */}
+                        {/* --- TAB: RECENT --- */}
                         {activeTab === 'recent' && (
                             <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 min-h-[400px]">
                                 <h2 className="text-2xl font-bold text-gray-800 mb-6">Service History</h2>
@@ -261,27 +299,60 @@
                             </div>
                         )}
 
-                        {/* TAB: PROFILE */}
+                        {/* --- TAB: PROFILE (Editable) --- */}
                         {activeTab === 'profile' && (
                             <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 min-h-[400px]">
-                                <h2 className="text-2xl font-bold text-gray-800 mb-6">My Profile</h2>
-                                <div className="max-w-md space-y-6">
-                                    <div>
-                                        <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Full Name</label>
-                                        <p className="font-semibold text-lg text-gray-900 border-b border-gray-200 pb-2">{customerData.name}</p>
+                                
+                                {isEditingProfile ? (
+                                    <form onSubmit={handleSaveProfile} className="max-w-md space-y-5">
+                                        
+                                        {/* UNEDITABLE USERNAME FIELD */}
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Username (Cannot be changed)</label>
+                                            <input type="text" readOnly value={`@${customerData.username}`} className="w-full rounded-lg border-gray-200 border p-3 bg-gray-100 text-gray-500 outline-none cursor-not-allowed font-semibold" title="Usernames cannot be changed" />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Full Name</label>
+                                            <input type="text" required value={editForm.name} onChange={(e) => setEditForm({...editForm, name: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Registered Phone</label>
+                                            <input type="tel" required value={editForm.phone} onChange={(e) => setEditForm({...editForm, phone: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Default Address</label>
+                                            <textarea required value={editForm.address} onChange={(e) => setEditForm({...editForm, address: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="3"></textarea>
+                                        </div>
+                                        
+                                        <div className="flex space-x-3 pt-4 border-t border-gray-100">
+                                            <button type="button" onClick={() => { setIsEditingProfile(false); setEditForm(customerData); }} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-semibold w-full">Cancel</button>
+                                            <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-sm w-full">Save Changes</button>
+                                        </div>
+                                    </form>
+                                ) : (
+                                    <div className="max-w-md space-y-6">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Username</label>
+                                            <p className="font-semibold text-lg text-blue-600 border-b border-gray-200 pb-2">@{customerData.username}</p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Full Name</label>
+                                            <p className="font-semibold text-lg text-gray-900 border-b border-gray-200 pb-2">{customerData.name}</p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Registered Phone</label>
+                                            <p className="font-semibold text-lg text-gray-900 border-b border-gray-200 pb-2">{customerData.phone || 'Not Provided'}</p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Default Address</label>
+                                            <p className="font-semibold text-lg text-gray-900 border-b border-gray-200 pb-2">{customerData.address}</p>
+                                        </div>
+                                        <button onClick={() => { setEditForm(customerData); setIsEditingProfile(true); }} className="bg-blue-50 text-blue-700 px-6 py-2 rounded-lg font-bold hover:bg-blue-100 transition mt-4 shadow-sm border border-blue-200">
+                                            Edit Profile
+                                        </button>
                                     </div>
-                                    <div>
-                                        <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Registered Phone</label>
-                                        <p className="font-semibold text-lg text-gray-900 border-b border-gray-200 pb-2">{customerData.phone || 'Not Provided'}</p>
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Default Address</label>
-                                        <p className="font-semibold text-lg text-gray-900 border-b border-gray-200 pb-2">{customerData.address}</p>
-                                    </div>
-                                    <button className="bg-blue-50 text-blue-700 px-4 py-2 rounded-lg font-bold hover:bg-blue-100 transition">
-                                        Edit Profile
-                                    </button>
-                                </div>
+                                )}
                             </div>
                         )}
 
