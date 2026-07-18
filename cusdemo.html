@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Job Saathi - Customer Portal</title>
     
-    <!-- Tailwind CSS & React Engine -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -18,45 +17,50 @@
         const { useState } = React;
 
         function App() {
-            // State to control the current page
-            const [currentView, setCurrentView] = useState('login'); // 'login', 'signup', 'dashboard'
+            // Main app view (login vs dashboard)
+            const [currentView, setCurrentView] = useState('login'); 
             
-            // State to store the customer's profile data
-            const [customerData, setCustomerData] = useState({ name: 'Guest', phone: '', address: '' });
-            
-            // State for the Signup Form inputs
-            const [signupForm, setSignupForm] = useState({ name: '', phone: '', address: '' });
+            // Dashboard navigation states
+            const [activeTab, setActiveTab] = useState('home'); // 'home', 'recent', 'profile'
+            const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-            // State for the Dashboard: Service Requests
+            // User & Data States
+            const [customerData, setCustomerData] = useState({ name: 'Guest', phone: '', address: 'Default Address' });
+            const [signupForm, setSignupForm] = useState({ name: '', phone: '', address: '' });
             const [activeRequests, setActiveRequests] = useState([]);
             const [newService, setNewService] = useState({ type: '', date: '', details: '' });
 
-            // --- FUNCTIONS ---
+            // Mock Data for "Recent" Tab
+            const pastServices = [
+                { id: 101, type: 'Electrician', date: '2026-06-15', status: 'Completed', worker: 'Raju Bhai', rating: '⭐️⭐️⭐️⭐️' },
+                { id: 102, type: 'Painter', date: '2026-05-10', status: 'Completed', worker: 'Suresh Kumar', rating: '⭐️⭐️⭐️⭐️⭐️' }
+            ];
+
             const handleSignup = (e) => {
                 e.preventDefault();
-                // Save the form data to the main customer profile
                 setCustomerData(signupForm);
-                // Redirect to dashboard
                 setCurrentView('dashboard');
+                setActiveTab('home');
             };
 
             const handleLogin = (e) => {
                 e.preventDefault();
-                // For the hackathon demo, any login attempt succeeds
                 setCurrentView('dashboard');
+                setActiveTab('home');
+            };
+
+            const handleLogout = () => {
+                setCurrentView('login');
+                setCustomerData({ name: 'Guest', phone: '', address: 'Default Address' });
+                setIsSidebarOpen(false);
             };
 
             const handlePostService = (e) => {
                 e.preventDefault();
                 const newId = Date.now();
-                
-                // Add the new service request to the list with a "Searching" status
                 setActiveRequests([{ id: newId, ...newService, status: 'Searching for workers...' }, ...activeRequests]);
-                
-                // Clear the form
                 setNewService({ type: '', date: '', details: '' });
 
-                // Simulation: Automatically update status after 5 seconds to look impressive for judges
                 setTimeout(() => {
                     setActiveRequests(current => 
                         current.map(req => 
@@ -66,174 +70,220 @@
                 }, 5000);
             };
 
-            // --- 1. LOGIN SCREEN ---
+            // --- 1. LOGIN & SIGNUP SCREENS ---
             if (currentView === 'login') {
                 return (
                     <div className="min-h-screen flex items-center justify-center p-4">
-                        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-100">
-                            <div className="text-center mb-8">
-                                <h1 className="text-4xl font-extrabold text-blue-900 tracking-tight">Job Saathi</h1>
-                                <p className="text-gray-500 mt-2">Customer Login Portal</p>
-                            </div>
-
-                            <form onSubmit={handleLogin} className="space-y-5">
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1">User ID / Phone Number</label>
-                                    <input type="text" required className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Enter your ID" />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Password</label>
-                                    <input type="password" required className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="••••••••" />
-                                </div>
-                                
-                                <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition shadow-md">
-                                    Login
-                                </button>
+                        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-100 text-center">
+                            <h1 className="text-4xl font-extrabold text-blue-900 tracking-tight mb-8">Job Saathi</h1>
+                            <form onSubmit={handleLogin} className="space-y-4 text-left">
+                                <input type="text" required className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="User ID / Phone" />
+                                <input type="password" required className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Password" />
+                                <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition shadow-md">Login</button>
                             </form>
-
-                            <div className="mt-8 text-center border-t pt-6">
-                                <p className="text-sm text-gray-600 mb-4">Don't have an account?</p>
-                                <button 
-                                    onClick={() => setCurrentView('signup')} 
-                                    className="w-full bg-green-50 border-2 border-green-500 text-green-700 p-3 rounded-lg font-bold hover:bg-green-100 transition shadow-sm"
-                                >
-                                    Create New Account
-                                </button>
-                            </div>
+                            <button onClick={() => setCurrentView('signup')} className="w-full mt-4 bg-green-50 border-2 border-green-500 text-green-700 p-3 rounded-lg font-bold hover:bg-green-100 transition">Create New Account</button>
                         </div>
                     </div>
                 );
             }
 
-            // --- 2. SIGN UP SCREEN ---
             if (currentView === 'signup') {
                 return (
                     <div className="min-h-screen flex items-center justify-center p-4">
                         <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-100 relative">
                             <button onClick={() => setCurrentView('login')} className="absolute top-6 left-6 text-gray-400 hover:text-blue-600 text-sm font-semibold">← Back</button>
-                            
-                            <div className="text-center mb-8 mt-4">
-                                <h2 className="text-2xl font-extrabold text-gray-800">Create Account</h2>
-                                <p className="text-gray-500 mt-1">Join to start hiring skilled workers</p>
-                            </div>
-
+                            <h2 className="text-2xl font-extrabold text-gray-800 text-center mb-6 mt-4">Create Account</h2>
                             <form onSubmit={handleSignup} className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Full Name</label>
-                                    <input type="text" required value={signupForm.name} onChange={(e) => setSignupForm({...signupForm, name: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g. Ramesh Kumar" />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Phone Number</label>
-                                    <input type="tel" required value={signupForm.phone} onChange={(e) => setSignupForm({...signupForm, phone: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="+91" />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Complete Address</label>
-                                    <textarea required value={signupForm.address} onChange={(e) => setSignupForm({...signupForm, address: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="3" placeholder="House/Flat No, Street, Landmark..."></textarea>
-                                </div>
-                                
-                                <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition shadow-md mt-4">
-                                    Register & Go to Dashboard
-                                </button>
+                                <input type="text" required value={signupForm.name} onChange={(e) => setSignupForm({...signupForm, name: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Full Name" />
+                                <input type="tel" required value={signupForm.phone} onChange={(e) => setSignupForm({...signupForm, phone: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Phone Number" />
+                                <textarea required value={signupForm.address} onChange={(e) => setSignupForm({...signupForm, address: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="2" placeholder="Complete Address"></textarea>
+                                <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition">Register</button>
                             </form>
                         </div>
                     </div>
                 );
             }
 
-            // --- 3. CUSTOMER DASHBOARD ---
+            // --- 2. DASHBOARD LAYOUT & SIDEBAR ---
             return (
-                <div className="min-h-screen p-8 max-w-6xl mx-auto">
+                <div className="min-h-screen flex relative overflow-hidden bg-gray-50">
                     
-                    {/* Header */}
-                    <header className="mb-8 flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                        <div>
-                            <h1 className="text-3xl font-extrabold text-blue-900 tracking-tight">Job Saathi</h1>
-                            <p className="text-gray-500 text-lg mt-1">Welcome back, <span className="font-semibold text-gray-800">{customerData.name}</span></p>
-                            <p className="text-sm text-gray-400">Service Location: {customerData.address || 'Default Address'}</p>
-                        </div>
-                        <button onClick={() => { setCurrentView('login'); setCustomerData({name: '', phone: '', address: ''}); }} className="text-gray-500 hover:text-red-500 font-semibold px-4 border border-gray-200 rounded-lg py-2 hover:bg-red-50 transition">
-                            Log Out
-                        </button>
-                    </header>
+                    {/* Dark Overlay when sidebar is open (Mobile friendly) */}
+                    {isSidebarOpen && (
+                        <div 
+                            className="fixed inset-0 bg-black bg-opacity-50 z-40 transition-opacity"
+                            onClick={() => setIsSidebarOpen(false)}
+                        ></div>
+                    )}
 
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    {/* Sidebar / Drawer */}
+                    <div className={`fixed top-0 left-0 h-full w-64 bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+                        <div className="p-6 border-b border-gray-100">
+                            <h2 className="text-2xl font-extrabold text-blue-900">Menu</h2>
+                        </div>
+                        <nav className="p-4 space-y-2">
+                            <button 
+                                onClick={() => { setActiveTab('home'); setIsSidebarOpen(false); }}
+                                className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'home' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                            >
+                                🏠 Home
+                            </button>
+                            <button 
+                                onClick={() => { setActiveTab('recent'); setIsSidebarOpen(false); }}
+                                className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'recent' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                            >
+                                🕒 Recent Services
+                            </button>
+                            <button 
+                                onClick={() => { setActiveTab('profile'); setIsSidebarOpen(false); }}
+                                className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'profile' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
+                            >
+                                👤 Profile
+                            </button>
+                            <div className="pt-4 mt-4 border-t border-gray-100">
+                                <button 
+                                    onClick={handleLogout}
+                                    className="w-full text-left px-4 py-3 rounded-lg font-bold text-red-600 hover:bg-red-50 transition-all"
+                                >
+                                    🚪 Log Out
+                                </button>
+                            </div>
+                        </nav>
+                    </div>
+
+                    {/* Main Content Area */}
+                    <div className="flex-1 p-8 max-w-6xl mx-auto w-full transition-all duration-300">
                         
-                        {/* Left Column: Request Form */}
-                        <div className="col-span-1">
-                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                                <h2 className="text-xl font-bold text-gray-800 mb-4">Request a Service</h2>
-                                
-                                <form onSubmit={handlePostService} className="space-y-4">
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-1">What service do you need?</label>
-                                        <select required value={newService.type} onChange={(e) => setNewService({...newService, type: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none bg-white">
-                                            <option value="">Select a skill...</option>
-                                            <option value="Plumber">Plumbing / Pipe Fitting</option>
-                                            <option value="Electrician">Electrician / Wiring</option>
-                                            <option value="Mason">Masonry / Construction</option>
-                                            <option value="Carpenter">Carpentry / Woodwork</option>
-                                            <option value="Painter">Painting</option>
-                                        </select>
-                                    </div>
-                                    
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-1">When do you need them?</label>
-                                        <input type="date" required value={newService.date} onChange={(e) => setNewService({...newService, date: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" />
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-1">Specific Details / Wage Offer</label>
-                                        <textarea required value={newService.details} onChange={(e) => setNewService({...newService, details: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="2" placeholder="e.g. Need to fix a leaking pipe in the kitchen. Offering ₹500."></textarea>
-                                    </div>
-                                    
-                                    <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 transition shadow-md mt-2">
-                                        Find Workers Now
-                                    </button>
-                                </form>
+                        {/* Header with Hamburger */}
+                        <header className="mb-8 flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                            <div className="flex items-center space-x-4">
+                                {/* Hamburger Button */}
+                                <button 
+                                    onClick={() => setIsSidebarOpen(true)}
+                                    className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg focus:outline-none"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                                    </svg>
+                                </button>
+                                <div>
+                                    <h1 className="text-3xl font-extrabold text-blue-900 tracking-tight">Job Saathi</h1>
+                                    <p className="text-gray-500 text-lg mt-1">Welcome back, <span className="font-semibold text-gray-800">{customerData.name}</span></p>
+                                    <p className="text-sm text-gray-400">Service Location: {customerData.address}</p>
+                                </div>
                             </div>
-                        </div>
+                            <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 font-semibold px-4 border border-gray-200 rounded-lg py-2 hover:bg-red-50 hidden md:block transition">
+                                Log Out
+                            </button>
+                        </header>
 
-                        {/* Right Column: Active Requests */}
-                        <div className="col-span-1 lg:col-span-2">
-                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 min-h-[400px]">
-                                <h2 className="text-xl font-bold text-gray-800 mb-6">Your Active Requests</h2>
-                                
-                                {activeRequests.length === 0 ? (
-                                    <div className="text-center text-gray-400 mt-20">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto mb-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                                        </svg>
-                                        <p>You have no active service requests.</p>
-                                        <p className="text-sm mt-1">Use the form on the left to hire someone.</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-4">
-                                        {activeRequests.map((req) => (
-                                            <div key={req.id} className="border border-gray-200 rounded-xl p-5 flex flex-col md:flex-row justify-between items-start md:items-center bg-gray-50 transition-all">
-                                                <div className="mb-4 md:mb-0">
-                                                    <div className="flex items-center space-x-3 mb-1">
-                                                        <h3 className="font-extrabold text-lg text-gray-900">{req.type}</h3>
-                                                        <span className="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-1 rounded">Date: {req.date}</span>
-                                                    </div>
-                                                    <p className="text-sm text-gray-600 mb-2">{req.details}</p>
-                                                </div>
-                                                
-                                                {/* Dynamic Status Badge */}
-                                                <div className="text-right w-full md:w-auto">
-                                                    <span className={`inline-block w-full text-center px-4 py-2 rounded-lg text-sm font-bold shadow-sm ${
-                                                        req.status.includes('Confirmed') 
-                                                        ? 'bg-green-500 text-white' 
-                                                        : 'bg-yellow-100 text-yellow-800 animate-pulse border border-yellow-300'
-                                                    }`}>
-                                                        {req.status}
-                                                    </span>
-                                                </div>
+                        {/* --- TAB ROUTING LOGIC --- */}
+                        
+                        {/* TAB: HOME (The original dashboard) */}
+                        {activeTab === 'home' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                <div className="col-span-1">
+                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                                        <h2 className="text-xl font-bold text-gray-800 mb-4">Request a Service</h2>
+                                        <form onSubmit={handlePostService} className="space-y-4">
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">What service do you need?</label>
+                                                <select required value={newService.type} onChange={(e) => setNewService({...newService, type: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none">
+                                                    <option value="">Select a skill...</option>
+                                                    <option value="Plumber">Plumbing / Pipe Fitting</option>
+                                                    <option value="Electrician">Electrician / Wiring</option>
+                                                    <option value="Mason">Masonry / Construction</option>
+                                                </select>
                                             </div>
-                                        ))}
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">When do you need them?</label>
+                                                <input type="date" required value={newService.date} onChange={(e) => setNewService({...newService, date: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">Specific Details / Wage Offer</label>
+                                                <textarea required value={newService.details} onChange={(e) => setNewService({...newService, details: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="2" placeholder="e.g. Need to fix a leaking pipe. Offering ₹500."></textarea>
+                                            </div>
+                                            <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 transition shadow-md">Find Workers Now</button>
+                                        </form>
                                     </div>
-                                )}
+                                </div>
+
+                                <div className="col-span-1 lg:col-span-2">
+                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 min-h-[400px]">
+                                        <h2 className="text-xl font-bold text-gray-800 mb-6">Your Active Requests</h2>
+                                        {activeRequests.length === 0 ? (
+                                            <div className="text-center text-gray-400 mt-20">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto mb-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                                                <p>You have no active service requests.</p>
+                                                <p className="text-sm mt-1">Use the form on the left to hire someone.</p>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-4">
+                                                {activeRequests.map((req) => (
+                                                    <div key={req.id} className="border border-gray-200 rounded-xl p-5 flex flex-col md:flex-row justify-between items-center bg-gray-50">
+                                                        <div className="w-full md:w-auto mb-4 md:mb-0">
+                                                            <div className="flex items-center space-x-3 mb-1">
+                                                                <h3 className="font-extrabold text-lg text-gray-900">{req.type}</h3>
+                                                                <span className="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-1 rounded">Date: {req.date}</span>
+                                                            </div>
+                                                            <p className="text-sm text-gray-600 mb-2">{req.details}</p>
+                                                        </div>
+                                                        <span className={`px-4 py-2 rounded-lg text-sm font-bold w-full md:w-auto text-center ${req.status.includes('Confirmed') ? 'bg-green-500 text-white' : 'bg-yellow-100 text-yellow-800 animate-pulse border border-yellow-300'}`}>
+                                                            {req.status}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
-                        </div>
+                        )}
+
+                        {/* TAB: RECENT */}
+                        {activeTab === 'recent' && (
+                            <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 min-h-[400px]">
+                                <h2 className="text-2xl font-bold text-gray-800 mb-6">Service History</h2>
+                                <div className="space-y-4">
+                                    {pastServices.map(job => (
+                                        <div key={job.id} className="border border-gray-200 rounded-xl p-5 flex justify-between items-center bg-gray-50">
+                                            <div>
+                                                <h3 className="font-extrabold text-lg text-gray-900">{job.type}</h3>
+                                                <p className="text-sm text-gray-500">Completed on: {job.date} • Worker: {job.worker}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-lg">{job.rating}</p>
+                                                <span className="text-xs font-bold text-gray-500 uppercase">Rated</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* TAB: PROFILE */}
+                        {activeTab === 'profile' && (
+                            <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 min-h-[400px]">
+                                <h2 className="text-2xl font-bold text-gray-800 mb-6">My Profile</h2>
+                                <div className="max-w-md space-y-6">
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Full Name</label>
+                                        <p className="font-semibold text-lg text-gray-900 border-b border-gray-200 pb-2">{customerData.name}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Registered Phone</label>
+                                        <p className="font-semibold text-lg text-gray-900 border-b border-gray-200 pb-2">{customerData.phone || 'Not Provided'}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Default Address</label>
+                                        <p className="font-semibold text-lg text-gray-900 border-b border-gray-200 pb-2">{customerData.address}</p>
+                                    </div>
+                                    <button className="bg-blue-50 text-blue-700 px-4 py-2 rounded-lg font-bold hover:bg-blue-100 transition">
+                                        Edit Profile
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                     </div>
                 </div>
