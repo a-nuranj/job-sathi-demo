@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Saathi - Customer Portal</title>
+    
+    <!-- Styling and React -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- FIREBASE CDN (Compat libraries for Realtime Database) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // ==========================================
+        // 🛑 REPLACE THIS WITH YOUR FIREBASE CONFIG
+        // Make sure to include your databaseURL!
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT_ID.firebaseio.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        // Initialize Firebase safely
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.database(); // Switched to Realtime Database
+
+        function App() {
+            // Global App State
+            const [currentUser, setCurrentUser] = useState(null);
+            const [isLoading, setIsLoading] = useState(true);
+            const [authView, setAuthView] = useState('login'); // 'login' or 'signup'
+            const [homeTab, setHomeTab] = useState('add_request'); // 'add_request' or 'active_requests'
+
+            // User Profile Data from Database
+            const [userProfile, setUserProfile] = useState({});
+
+            // Form States
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [signupData, setSignupData] = useState({ name: '', username: '', phone: '', address: '' });
+            
+            // Location & Request States
+            const [currentLocation, setCurrentLocation] = useState('Detecting location...');
+            const [newRequest, setNewRequest] = useState({ service: '', date: '', address: '' });
+            const [activeRequests, setActiveRequests] = useState([]);
+
+            // ==========================================
+            // 1. AUTHENTICATION & DATABASE LISTENER
+            // ==========================================
+            useEffect(() => {
+                const unsubscribe = auth.onAuthStateChanged((user) => {
+                    if (user) {
+                        setCurrentUser(user);
+                        
+                        // Fetch the user's extra details from Realtime Database
+                        db.ref('users/' + user.uid).once('value').then((snapshot) => {
+                            if (snapshot.exists()) {
+                                setUserProfile(snapshot.val());
+                            }
+                            setIsLoading(false);
+                        });
+                        
+                        // Automatically fetch their active requests in real-time
+                        const requestsRef = db.ref('requests').orderByChild('userId').equalTo(user.uid);
+                        
+                        requestsRef.on('value', (snapshot) => {
+                            const reqs = [];
+                            snapshot.forEach((childSnapshot) => {
+                                reqs.push({ id: childSnapshot.key, ...childSnapshot.val() });
+                            });
+                            // Reverse the array so the newest requests show up at the top
+                            setActiveRequests(reqs.reverse());
+                        });
+
+                    } else {
+                        setCurrentUser(null);
+                        setUserProfile({});
+                        setActiveRequests([]);
+                        setIsLoading(false);
+                    }
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // ==========================================
+            // 2. AUTHENTICATION FUNCTIONS
+            // ==========================================
+            const handleSignup = async (e) => {
+                e.preventDefault();
+                setIsLoading(true);
+                try {
+                    // Create account in Firebase Auth
+                    const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                    const user = userCredential.user;
+
+                    // Save extra details (name, phone, address) to Realtime Database
+                    await db.ref('users/' + user.uid).set({
+                        name: signupData.name,
+                        username: signupData.username,
+                        phone: signupData.phone,
+                        address: signupData.address,
+                        email: email,
+                        createdAt: firebase.database.ServerValue.TIMESTAMP
+                    });
+
+                    setNewRequest(prev => ({ ...prev, address: signupData.address })); // Set default address
+                } catch (error) {
+                    alert(error.message);
+                    setIsLoading(false);
+                }
+            };
+
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                setIsLoading(true);
+                try {
+                    await auth.signInWithEmailAndPassword(email, password);
+                } catch (error) {
+                    alert(error.message);
+                    setIsLoading(false);
+                }
+            };
+
+            const handleLogout = () => {
+                // Remove the real-time listener before logging out to prevent errors
+                if (currentUser) {
+                    db.ref('requests').orderByChild('userId').equalTo(currentUser.uid).off();
+                }
+                auth.signOut();
+            };
+
+            // ==========================================
+            // 3. LOCATION & DATABASE FUNCTIONS
+            // ==========================================
+            const detectLocation = () => {
+                setCurrentLocation("Locating...");
+                if ("geolocation" in navigator) {
+                    navigator.geolocation.getCurrentPosition(
+                        async (position) => {
+                            try {
+                                const { latitude, longitude } = position.coords;
+                                const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+                                const data = await res.json();
+                                const locality = data.address.neighbourhood || data.address.suburb || data.address.village || data.address.town;
+                                const district = data.address.state_district || data.address.city_district || data.address.city;
+                                
+                                setCurrentLocation(locality && district ? `${locality}, ${district}` : data.display_name);
+                            } catch (err) {
+                                setCurrentLocation("Error getting area name");
+                            }
+                        },
+                        (error) => { setCurrentLocation("Location Permission Denied"); },
+                        { enableHighAccuracy: true }
+                    );
+                } else {
+                    setCurrentLocation("GPS not supported");
+                }
+            };
+
+            const submitJobRequest = async (e) => {
+                e.preventDefault();
+                try {
+                    // Push the new request to the Realtime Database
+                    await db.ref('requests').push({
+                        userId: currentUser.uid,
+                        customerName: userProfile.name,
+                        service: newRequest.service,
+                        date: newRequest.date,
+                        address: newRequest.address,
+                        status: 'Pending Worker Assignment', // Default status
+                        timestamp: firebase.database.ServerValue.TIMESTAMP
+                    });
+                    
+                    alert("Request submitted successfully!");
+                    setNewRequest({ service: '', date: '', address: userProfile.address || '' });
+                    setHomeTab('active_requests'); // Switch tab to see the new request
+                } catch (error) {
+                    alert("Error submitting request: " + error.message);
+                }
+            };
+
+            // ==========================================
+            // UI RENDERING
+            // ==========================================
+            if (isLoading) {
+                return <div className="min-h-screen flex items-center justify-center text-xl font-bold text-gray-500">Loading Application...</div>;
+            }
+
+            // --- AUTHENTICATION SCREENS (LOGIN/SIGNUP) ---
+            if (!currentUser) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-4 bg-gray-100">
+                        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-200">
+                            <h1 className="text-3xl font-extrabold text-blue-900 text-center mb-6">Job Saathi</h1>
+                            
+                            {authView === 'login' ? (
+                                <form onSubmit={handleLogin} className="space-y-4">
+                                    <h2 className="text-xl font-bold text-gray-700">Log In</h2>
+                                    <input type="email" required placeholder="Email Address" onChange={(e) => setEmail(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500" />
+                                    <input type="password" required placeholder="Password" onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500" />
+                                    <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 shadow-md">Log In</button>
+                                    <p className="text-center text-sm text-gray-500 mt-4">
+                                        Don't have an account? <span onClick={() => setAuthView('signup')} className="text-blue-600 font-bold cursor-pointer hover:underline">Sign Up</span>
+                                    </p>
+                                </form>
+                            ) : (
+                                <form onSubmit={handleSignup} className="space-y-3">
+                                    <h2 className="text-xl font-bold text-gray-700">Create Account</h2>
+                                    <input type="email" required placeholder="Email Address" onChange={(e) => setEmail(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <input type="password" required placeholder="Password (min 6 chars)" onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <div className="border-t border-gray-200 my-2 pt-2"></div>
+                                    <input type="text" required placeholder="Full Name" onChange={(e) => setSignupData({...signupData, name: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <input type="text" required placeholder="Username" onChange={(e) => setSignupData({...signupData, username: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <input type="tel" required placeholder="Phone Number" onChange={(e) => setSignupData({...signupData, phone: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <textarea required placeholder="Home Address" onChange={(e) => setSignupData({...signupData, address: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" rows="2"></textarea>
+                                    <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 shadow-md">Register</button>
+                                    <p className="text-center text-sm text-gray-500 mt-4">
+                                        Already have an account? <span onClick={() => setAuthView('login')} className="text-blue-600 font-bold cursor-pointer hover:underline">Log In</span>
+                                    </p>
+                                </form>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- HOME SCREEN (LOGGED IN) ---
+            return (
+                <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4 sm:p-8">
+                    <div className="w-full max-w-3xl bg-white rounded-3xl shadow-lg overflow-hidden border border-gray-200">
+                        
+                        {/* Header Section */}
+                        <div className="bg-blue-900 text-white p-6 sm:p-8">
+                            <div className="flex justify-between items-center mb-4">
+                                <div>
+                                    <h1 className="text-2xl font-extrabold tracking-wide">Job Saathi</h1>
+                                    <p className="text-blue-200 text-sm mt-1">Welcome back, {userProfile.name} (@{userProfile.username})</p>
+                                </div>
+                                <button onClick={handleLogout} className="text-xs bg-red-500 hover:bg-red-600 px-4 py-2 rounded-lg font-bold shadow-sm transition">Log Out</button>
+                            </div>
+
+                            {/* Location Display */}
+                            <div className="bg-blue-800 rounded-xl p-4 flex items-center justify-between shadow-inner">
+                                <div className="flex items-center space-x-3">
+                                    <span className="text-2xl">📍</span>
+                                    <div>
+                                        <p className="text-xs text-blue-300 font-bold uppercase tracking-wider">Current Location</p>
+                                        <p className="font-semibold text-lg">{currentLocation}</p>
+                                    </div>
+                                </div>
+                                <button onClick={detectLocation} className="bg-white text-blue-900 px-3 py-1.5 rounded-lg text-sm font-bold shadow-sm hover:bg-gray-100 transition">Update</button>
+                            </div>
+                        </div>
+
+                        {/* Navigation Tabs */}
+                        <div className="flex border-b border-gray-200 bg-gray-50">
+                            <button onClick={() => setHomeTab('add_request')} className={`flex-1 py-4 text-center font-bold text-sm uppercase tracking-wider transition-colors ${homeTab === 'add_request' ? 'border-b-4 border-blue-600 text-blue-700 bg-white' : 'text-gray-500 hover:text-gray-800'}`}>
+                                ➕ Make a Request
+                            </button>
+                            <button onClick={() => setHomeTab('active_requests')} className={`flex-1 py-4 text-center font-bold text-sm uppercase tracking-wider transition-colors ${homeTab === 'active_requests' ? 'border-b-4 border-blue-600 text-blue-700 bg-white' : 'text-gray-500 hover:text-gray-800'}`}>
+                                📋 Active Requests
+                            </button>
+                        </div>
+
+                        {/* Content Area */}
+                        <div className="p-6 sm:p-8 bg-white min-h-[400px]">
+                            
+                            {/* SECTION: ADD A REQUEST */}
+                            {homeTab === 'add_request' && (
+                                <form onSubmit={submitJobRequest} className="space-y-6 max-w-xl mx-auto">
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">What service is needed?</label>
+                                        <input type="text" required value={newRequest.service} onChange={(e) => setNewRequest({...newRequest, service: e.target.value})} placeholder="e.g. Plumber, Electrician, Cleaner" className="w-full border border-gray-300 rounded-xl p-4 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">When do you need it?</label>
+                                        <input type="date" required value={newRequest.date} onChange={(e) => setNewRequest({...newRequest, date: e.target.value})} className="w-full border border-gray-300 rounded-xl p-4 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">Confirm Service Address</label>
+                                        <textarea required value={newRequest.address || userProfile.address} onChange={(e) => setNewRequest({...newRequest, address: e.target.value})} className="w-full border border-gray-300 rounded-xl p-4 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition" rows="3"></textarea>
+                                    </div>
+                                    <button type="submit" className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold text-lg hover:bg-blue-700 shadow-lg transition transform hover:-translate-y-0.5">
+                                        Submit Request
+                                    </button>
+                                </form>
+                            )}
+
+                            {/* SECTION: ACTIVE REQUESTS */}
+                            {homeTab === 'active_requests' && (
+                                <div>
+                                    {activeRequests.length === 0 ? (
+                                        <div className="text-center text-gray-400 py-16 border-2 border-dashed border-gray-200 rounded-2xl">
+                                            <p className="text-xl mb-2">🤷‍♂️</p>
+                                            <p className="font-bold">No active requests found.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            {activeRequests.map((req) => (
+                                                <div key={req.id} className="border border-gray-200 rounded-2xl p-5 hover:shadow-md transition bg-white relative overflow-hidden">
+                                                    <div className="flex justify-between items-start mb-3">
+                                                        <h3 className="font-extrabold text-xl text-gray-900">{req.service}</h3>
+                                                        <span className={`px-3 py-1 text-xs font-bold rounded-full ${req.status.includes('Pending') ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}`}>
+                                                            {req.status}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-500 mb-1"><strong>Date:</strong> {req.date}</p>
+                                                    <p className="text-sm text-gray-500"><strong>Address:</strong> {req.address}</p>
+                                                    
+                                                    {/* Decorative bottom bar indicating status color */}
+                                                    <div className={`absolute bottom-0 left-0 w-full h-1 ${req.status.includes('Pending') ? 'bg-yellow-400' : 'bg-green-500'}`}></div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
