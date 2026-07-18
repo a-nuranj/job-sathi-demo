@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VELA - Worker Portal</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyACjDUvLGLETIWevuzutrzngzc_2TO6yd8",
+            authDomain: "vela-cc8a5.firebaseapp.com",
+            databaseURL: "https://vela-cc8a5-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "vela-cc8a5",
+            storageBucket: "vela-cc8a5.firebasestorage.app",
+            messagingSenderId: "603919577853",
+            appId: "1:603919577853:web:0ce24d0e14d9767eb18494",
+            measurementId: "G-ZJKWN8QR8B"
+        };
+
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.database(); 
+
+        function App() {
+            const [currentUser, setCurrentUser] = useState(null);
+            const [isLoading, setIsLoading] = useState(true);
+            const [authView, setAuthView] = useState('login'); 
+            const [homeTab, setHomeTab] = useState('available_jobs'); 
+
+            const [workerProfile, setWorkerProfile] = useState({});
+            const [availableRequests, setAvailableRequests] = useState([]);
+            const [myAcceptedJobs, setMyAcceptedJobs] = useState([]);
+            
+            const [completionForms, setCompletionForms] = useState({});
+
+            const [aadharLogin, setAadharLogin] = useState('');
+            const [password, setPassword] = useState('');
+            const [signupData, setSignupData] = useState({ 
+                name: '', phone: '', address: '', aadhar: '', job: 'Plumber', experience: '0-1 Years' 
+            });
+
+            useEffect(() => {
+                const unsubscribe = auth.onAuthStateChanged((user) => {
+                    if (user) {
+                        setCurrentUser(user);
+                        
+                        db.ref('workers/' + user.uid).once('value').then((snapshot) => {
+                            if (snapshot.exists()) {
+                                const profile = snapshot.val();
+                                setWorkerProfile(profile);
+                                
+                                db.ref('requests').on('value', (reqSnapshot) => {
+                                    const available = [];
+                                    const accepted = [];
+                                    
+                                    reqSnapshot.forEach((child) => {
+                                        const req = { id: child.key, ...child.val() };
+                                        
+                                        const requestedService = (req.service || "").trim().toLowerCase();
+                                        const workerTrade = (profile.job || "").trim().toLowerCase();
+                                        
+                                        const hasDeclined = req.declinedBy && req.declinedBy[user.uid] === true;
+                                        
+                                        if (requestedService === workerTrade && (req.status || "").includes('Pending Worker') && !hasDeclined) {
+                                            available.push(req);
+                                        }
+                                        
+                                        if (req.workerId === user.uid) {
+                                            accepted.push(req);
+                                        }
+                                    });
+                                    
+                                    setAvailableRequests(available.reverse());
+                                    setMyAcceptedJobs(accepted.reverse());
+                                });
+                            }
+                            setIsLoading(false);
+                        });
+
+                    } else {
+                        setCurrentUser(null);
+                        setWorkerProfile({});
+                        setAvailableRequests([]);
+                        setMyAcceptedJobs([]);
+                        setIsLoading(false);
+                    }
+                });
+                return () => unsubscribe();
+            }, []);
+
+            const switchAuthView = (view) => {
+                setAuthView(view);
+                setAadharLogin('');
+                setPassword('');
+            };
+
+            const handleSignup = async (e) => {
+                e.preventDefault();
+                if (signupData.aadhar.length !== 12) {
+                    alert("Aadhar Number must be exactly 12 digits.");
+                    return;
+                }
+                setIsLoading(true);
+                try {
+                    const mappedEmail = `${signupData.aadhar}@worker.vela.com`;
+                    const userCredential = await auth.createUserWithEmailAndPassword(mappedEmail, password);
+                    const user = userCredential.user;
+
+                    await db.ref('workers/' + user.uid).set({
+                        name: signupData.name,
+                        phone: signupData.phone,
+                        address: signupData.address,
+                        job: signupData.job,
+                        experience: signupData.experience,
+                        aadhar: signupData.aadhar,
+                        createdAt: firebase.database.ServerValue.TIMESTAMP
+                    });
+                } catch (error) {
+                    alert("Registration Error: " + error.message);
+                    setIsLoading(false);
+                }
+            };
+
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                setIsLoading(true);
+                try {
+                    const mappedEmail = `${aadharLogin}@worker.vela.com`;
+                    await auth.signInWithEmailAndPassword(mappedEmail, password);
+                } catch (error) {
+                    alert("Login Error: Please check your Aadhar number and password.");
+                    setIsLoading(false);
+                }
+            };
+
+            const handleLogout = () => {
+                db.ref('requests').off();
+                auth.signOut();
+            };
+
+            const acceptJob = async (reqId) => {
+                try {
+                    await db.ref('requests/' + reqId).update({
+                        status: `Accepted by ${workerProfile.name}`,
+                        workerId: currentUser.uid,
+                        workerPhone: workerProfile.phone
+                    });
+                    setHomeTab('my_jobs');
+                } catch (error) {
+                    alert("Error accepting job: " + error.message);
+                }
+            };
+
+            const declineJob = async (reqId) => {
+                try {
+                    await db.ref(`requests/${reqId}/declinedBy/${currentUser.uid}`).set(true);
+                } catch (error) {
+                    alert("Error declining job: " + error.message);
+                }
+            };
+
+            const handleCompletionFormChange = (reqId, field, value) => {
+                setCompletionForms(prev => ({
+                    ...prev,
+                    [reqId]: { ...prev[reqId], [field]: value }
+                }));
+            };
+
+            const completeJob = async (reqId) => {
+                const formData = completionForms[reqId];
+                
+                if (!formData || !formData.issueDetails || formData.issueDetails.trim() === '') {
+                    alert("Please provide the details of what type of issue it was before completing the job.");
+                    return;
+                }
+
+                try {
+                    const finalStatus = formData.finalStatus || 'Job Completed Successfully';
+                    
+                    await db.ref('requests/' + reqId).update({
+                        status: finalStatus,
+                        resolutionNote: formData.issueDetails,
+                        completedAt: firebase.database.ServerValue.TIMESTAMP
+                    });
+                    
+                    setCompletionForms(prev => {
+                        const newState = {...prev};
+                        delete newState[reqId];
+                        return newState;
+                    });
+                    
+                } catch (error) {
+                    alert("Error completing job: " + error.message);
+                }
+            };
+
+            if (isLoading) {
+                return <div className="min-h-screen flex items-center justify-center text-xl font-bold text-gray-500">Loading Application...</div>;
+            }
+
+            if (!currentUser) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-4 bg-gray-100">
+                        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border-t-8 border-green-600">
+                            <h1 className="text-3xl font-extrabold text-green-700 text-center mb-2 tracking-wide">VELA</h1>
+                            <p className="text-center text-gray-500 font-bold mb-6">WORKER PORTAL</p>
+                            
+                            {authView === 'login' ? (
+                                <form onSubmit={handleLogin} className="space-y-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 mb-1">Aadhar Number</label>
+                                        <input type="text" pattern="\d{12}" maxLength="12" required value={aadharLogin} placeholder="12-Digit Aadhar" onChange={(e) => setAadharLogin(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-green-500" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 mb-1">Password</label>
+                                        <input type="password" required value={password} placeholder="Password" onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-green-500" />
+                                    </div>
+                                    <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 shadow-md transition">Log In securely</button>
+                                    <p className="text-center text-sm text-gray-500 mt-4">
+                                        Not registered yet? <span onClick={() => switchAuthView('signup')} className="text-green-600 font-bold cursor-pointer hover:underline">Apply here</span>
+                                    </p>
+                                </form>
+                            ) : (
+                                <form onSubmit={handleSignup} className="space-y-3">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 mb-1">12-Digit Aadhar</label>
+                                            <input type="text" pattern="\d{12}" maxLength="12" required value={signupData.aadhar} placeholder="000000000000" onChange={(e) => setSignupData({...signupData, aadhar: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 mb-1">Password</label>
+                                            <input type="password" required value={password} placeholder="Min 6 chars" onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                        </div>
+                                    </div>
+                                    <div className="border-t border-gray-200 my-2 pt-2"></div>
+                                    
+                                    <input type="text" required placeholder="Full Legal Name" onChange={(e) => setSignupData({...signupData, name: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <input type="tel" required placeholder="Phone Number" onChange={(e) => setSignupData({...signupData, phone: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <textarea required placeholder="Full Home Address" onChange={(e) => setSignupData({...signupData, address: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" rows="2"></textarea>
+                                    
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 mb-1">Your Trade / Skill</label>
+                                            <select required value={signupData.job} onChange={(e) => setSignupData({...signupData, job: e.target.value})} className="w-full border border-gray-300 rounded-lg p-3 bg-white outline-none">
+                                                <option value="Plumber">Plumber</option>
+                                                <option value="Electrician">Electrician</option>
+                                                <option value="Cleaner">Cleaner</option>
+                                                <option value="Carpenter">Carpenter</option>
+                                                <option value="Painter">Painter</option>
+                                                <option value="Appliance Repair">Appliance Repair</option>
+                                                <option value="Mason">Mason</option>
+                                                <option value="Other">Other</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 mb-1">Experience</label>
+                                            <select required value={signupData.experience} onChange={(e) => setSignupData({...signupData, experience: e.target.value})} className="w-full border border-gray-300 rounded-lg p-3 bg-white outline-none">
+                                                <option value="0-1 Years">0-1 Years</option>
+                                                <option value="2-4 Years">2-4 Years</option>
+                                                <option value="5+ Years">5+ Years</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 shadow-md transition mt-2">Submit Registration</button>
+                                    <p className="text-center text-sm text-gray-500 mt-4">
+                                        Already registered? <span onClick={() => switchAuthView('login')} className="text-green-600 font-bold cursor-pointer hover:underline">Log In</span>
+                                    </p>
+                                </form>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-gray-100 flex flex-col w-full">
+                    
+                    <div className="bg-green-700 w-full relative z-20 shadow-md">
+                        <div className="w-full px-6 py-4 flex justify-between items-center max-w-7xl mx-auto">
+                            <h1 className="text-2xl font-extrabold text-white tracking-widest uppercase">VELA <span className="text-green-200 text-sm tracking-normal">| Worker</span></h1>
+                            <button onClick={handleLogout} className="text-xs bg-red-500 hover:bg-red-600 px-4 py-2 text-white rounded-lg font-bold shadow-sm transition">Log Out</button>
+                        </div>
+                    </div>
+
+                    <div className="bg-green-600 w-full px-6 py-6 border-t border-green-500 shadow-inner">
+                        <div className="max-w-7xl mx-auto flex justify-between items-end">
+                            <div className="text-white">
+                                <p className="text-sm text-green-200 uppercase tracking-wider font-bold">Logged in as</p>
+                                <h2 className="text-2xl font-semibold">{workerProfile.name}</h2>
+                                <p className="font-bold text-green-100 mt-1">Trade: <span className="bg-green-800 px-2 py-1 rounded text-xs ml-1">{workerProfile.job}</span></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="max-w-7xl mx-auto w-full mt-4 px-4 sm:px-6">
+                        <div className="flex border-b border-gray-300">
+                            <button onClick={() => setHomeTab('available_jobs')} className={`py-3 px-6 font-bold text-sm uppercase tracking-wider transition-colors ${homeTab === 'available_jobs' ? 'border-b-4 border-green-600 text-green-700' : 'text-gray-500 hover:text-gray-800'}`}>
+                                🔔 Available Jobs ({availableRequests.length})
+                            </button>
+                            <button onClick={() => setHomeTab('my_jobs')} className={`py-3 px-6 font-bold text-sm uppercase tracking-wider transition-colors ${homeTab === 'my_jobs' ? 'border-b-4 border-green-600 text-green-700' : 'text-gray-500 hover:text-gray-800'}`}>
+                                💼 My Accepted Jobs
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6">
+                        
+                        {homeTab === 'available_jobs' && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {availableRequests.length === 0 ? (
+                                    <div className="col-span-full text-center text-gray-500 py-16 bg-white rounded-2xl shadow-sm border border-gray-200">
+                                        <p className="text-4xl mb-3">☕</p>
+                                        <p className="font-bold text-lg">No open {workerProfile.job} requests right now.</p>
+                                        <p className="text-sm">We'll let you know when a customer posts one!</p>
+                                    </div>
+                                ) : (
+                                    availableRequests.map((req) => (
+                                        <div key={req.id} className="bg-white border border-gray-200 rounded-2xl p-5 hover:shadow-lg transition relative overflow-hidden flex flex-col">
+                                            <div className="flex justify-between items-start mb-3 border-b pb-3">
+                                                <div>
+                                                    <h4 className="font-extrabold text-xl text-gray-900">{req.customerName}</h4>
+                                                    <p className="text-xs text-gray-500 font-bold">Needs a {req.service} by {req.date}</p>
+                                                </div>
+                                            </div>
+                                            
+                                            <p className="text-sm text-gray-800 mb-3 bg-gray-50 p-3 rounded-lg flex-1 border border-gray-100">
+                                                <strong>Details:</strong> {req.details}
+                                            </p>
+
+                                            {req.imageUrl && (
+                                                <div className="mb-3">
+                                                    <a href={req.imageUrl} target="_blank" rel="noreferrer">
+                                                        <img src={req.imageUrl} alt="Problem" className="h-24 w-full object-cover rounded-lg border border-gray-300 hover:opacity-80 transition cursor-pointer" />
+                                                    </a>
+                                                </div>
+                                            )}
+                                            
+                                            <p className="text-sm text-gray-600 mb-4"><strong>📍 Area:</strong> {req.locationArea}</p>
+                                            
+                                            <div className="flex gap-2 mt-auto">
+                                                <button onClick={() => declineJob(req.id)} className="w-1/3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition shadow-sm border border-gray-200 text-sm">
+                                                    Decline
+                                                </button>
+                                                <button onClick={() => acceptJob(req.id)} className="w-2/3 bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl transition shadow-md">
+                                                    Accept Job
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        )}
+
+                        {homeTab === 'my_jobs' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {myAcceptedJobs.length === 0 ? (
+                                    <div className="col-span-full text-center text-gray-500 py-16 bg-white rounded-2xl shadow-sm border border-gray-200">
+                                        <p className="text-3xl mb-3">🛠️</p>
+                                        <p className="font-bold">You haven't accepted any jobs yet.</p>
+                                    </div>
+                                ) : (
+                                    myAcceptedJobs.map((req) => (
+                                        <div key={req.id} className={`bg-white border-2 rounded-2xl p-6 shadow-sm relative overflow-hidden flex flex-col md:flex-row gap-6 ${req.status.includes('Completed') ? 'border-blue-200 opacity-90' : 'border-green-200'}`}>
+                                            <div className="flex-1">
+                                                <h4 className="font-extrabold text-2xl text-gray-900 mb-1">{req.customerName}</h4>
+                                                <span className={`px-3 py-1 text-xs font-bold rounded-full mb-4 inline-block ${req.status.includes('Completed') || req.status.includes('Could Not Fix') ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
+                                                    {req.status}
+                                                </span>
+                                                
+                                                <p className="text-sm text-gray-600 mb-1"><strong>Date Needed:</strong> {req.date}</p>
+                                                <p className="text-sm text-gray-600 mb-1"><strong>Address:</strong> {req.address || 'Address not provided'}</p>
+                                                <p className="text-sm text-gray-600 mb-4"><strong>Customer Issue:</strong> {req.details}</p>
+                                                
+                                                {(req.status.includes('Completed') || req.status.includes('Could Not Fix') || req.status.includes('Requires Parts')) && (
+                                                    <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mt-2">
+                                                        <p className="text-xs font-bold text-blue-800 mb-1">Your Resolution Report:</p>
+                                                        {/* Fix for older test jobs that lack a report */}
+                                                        <p className="text-sm text-blue-900">{req.resolutionNote || "No report provided for this older job."}</p>
+                                                    </div>
+                                                )}
+
+                                                {!req.status.includes('Completed') && !req.status.includes('Could Not Fix') && !req.status.includes('Requires Parts') && (
+                                                    <div className="mt-5 border-t-2 border-dashed border-gray-200 pt-4">
+                                                        <label className="block text-xs font-bold text-gray-600 mb-1 uppercase tracking-wider">Submit Job Report</label>
+                                                        
+                                                        <textarea 
+                                                            required
+                                                            className="w-full border border-gray-300 bg-gray-50 rounded-lg p-3 text-sm mb-3 outline-none focus:ring-2 focus:ring-green-500" 
+                                                            placeholder="What type of issue was it? (e.g., Replaced faulty wiring, sealed pipe leak...)"
+                                                            onChange={(e) => handleCompletionFormChange(req.id, 'issueDetails', e.target.value)}
+                                                        ></textarea>
+                                                        
+                                                        <select 
+                                                            className="w-full border border-gray-300 bg-white rounded-lg p-3 text-sm mb-4 outline-none focus:ring-2 focus:ring-green-500"
+                                                            onChange={(e) => handleCompletionFormChange(req.id, 'finalStatus', e.target.value)}
+                                                            defaultValue="Job Completed Successfully"
+                                                        >
+                                                            <option value="Job Completed Successfully">✅ Job Completed Successfully</option>
+                                                            <option value="Requires Parts / Follow-up">⚠️ Requires Parts / Follow-up</option>
+                                                            <option value="Could Not Fix">❌ Could Not Fix</option>
+                                                        </select>
+
+                                                        <button onClick={() => completeJob(req.id)} className="w-full bg-gray-900 hover:bg-black text-white px-4 py-3 rounded-xl font-bold text-sm transition shadow-md">
+                                                            Mark Status & Submit Report
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {req.imageUrl && (
+                                                <div className="md:w-1/3">
+                                                    <img src={req.imageUrl} alt="Problem" className="w-full h-auto object-cover rounded-xl border border-gray-200" />
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        )}
+
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

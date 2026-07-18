@@ -214,7 +214,7 @@
                 }
             };
 
-            const submitJobRequest = async (e) => {
+                const submitJobRequest = async (e) => {
                 e.preventDefault();
                 if(!currentLocation || currentLocation === "Locating...") {
                     alert("Please provide or detect a valid location before submitting.");
@@ -226,7 +226,6 @@
                 try {
                     let imageUrl = null;
 
-                    // ✅ Upload Image to Firebase Storage if selected
                     if (newRequest.imageFile) {
                         const fileExt = newRequest.imageFile.name.split('.').pop();
                         const fileName = `job_images/${currentUser.uid}_${Date.now()}.${fileExt}`;
@@ -236,27 +235,27 @@
                         imageUrl = await imageRef.getDownloadURL();
                     }
 
-                    // Push the complete request to the Realtime Database
+                    // ✅ FIX: Use (newRequest.address || userProfile.address) 
+                    // This ensures if the box is empty, it uses their saved profile address.
                     await db.ref('requests').push({
                         userId: currentUser.uid,
                         customerName: userProfile.name || 'Customer',
                         service: newRequest.service,
                         date: newRequest.date,
-                        details: newRequest.details, // Replaced Address with Details
-                        imageUrl: imageUrl,          // Added Image URL
+                        address: newRequest.address || userProfile.address, 
                         locationArea: currentLocation, 
                         status: 'Pending Worker Assignment',
-                        timestamp: firebase.database.ServerValue.TIMESTAMP
+                        timestamp: firebase.database.ServerValue.TIMESTAMP,
+                        imageUrl: imageUrl
                     });
                     
                     alert("Request submitted successfully!");
-                    setNewRequest({ service: 'Plumber', date: '', details: '', imageFile: null }); // Reset form
-                    
-                    // Reset file input visually
+                    setNewRequest({ service: '', date: '', details: '', address: userProfile.address || '' });
                     document.getElementById('image-upload-input').value = ''; 
+                    setHomeTab('active_requests'); 
                 } catch (error) {
                     console.error(error);
-                    alert("Error submitting request. (If image upload failed, check Firebase Storage Rules). Error: " + error.message);
+                    alert("Error submitting request: " + error.message);
                 } finally {
                     setIsSubmitting(false);
                 }
