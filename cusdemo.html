@@ -24,6 +24,9 @@
             const [activeTab, setActiveTab] = useState('home'); 
             const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
+            // Home Tab Multi-Step Flow ('list', 'form', 'estimate')
+            const [homeView, setHomeView] = useState('list'); 
+
             // User & Data States
             const [customerData, setCustomerData] = useState({ name: 'Guest User', username: 'guest_user', phone: '', address: 'Default Address' });
             const [signupForm, setSignupForm] = useState({ name: '', username: '', phone: '', address: '' });
@@ -34,15 +37,15 @@
 
             // Service & Request States
             const [activeRequests, setActiveRequests] = useState([]);
-            const [newService, setNewService] = useState({ type: '', date: '', details: '' });
+            const [newService, setNewService] = useState({ type: '', date: '', details: '', photoName: '' });
 
-            // Market Rates Dictionary
-            const marketRates = {
-                Plumber: '₹600 - ₹800/day',
-                Electrician: '₹700 - ₹900/day',
-                Mason: '₹800 - ₹1000/day',
-                Carpenter: '₹750 - ₹950/day',
-                Painter: '₹500 - ₹700/day'
+            // Upgraded Estimation Engine (Cost + Time)
+            const serviceEstimates = {
+                Plumber: { cost: '₹600 - ₹800', time: '2 - 4 Hours' },
+                Electrician: { cost: '₹700 - ₹900', time: '1 - 3 Hours' },
+                Mason: { cost: '₹800 - ₹1000', time: 'Full Day (8 Hours)' },
+                Carpenter: { cost: '₹750 - ₹950', time: '4 - 6 Hours' },
+                Painter: { cost: '₹500 - ₹700', time: 'Full Day (8 Hours)' }
             };
 
             const pastServices = [
@@ -56,6 +59,7 @@
                 setEditForm(signupForm);
                 setCurrentView('dashboard');
                 setActiveTab('home');
+                setHomeView('list');
             };
 
             const handleLogin = (e) => {
@@ -63,6 +67,7 @@
                 setEditForm(customerData);
                 setCurrentView('dashboard');
                 setActiveTab('home');
+                setHomeView('list');
             };
 
             const handleLogout = () => {
@@ -77,11 +82,18 @@
                 setIsEditingProfile(false);
             };
 
-            const handlePostService = (e) => {
+            // Transitions to Estimate Page
+            const handleNextStep = (e) => {
                 e.preventDefault();
+                setHomeView('estimate');
+            };
+
+            // Final Confirmation & Job Posting
+            const handleConfirmJob = () => {
                 const newId = Date.now();
                 setActiveRequests([{ id: newId, ...newService, status: 'Searching for workers...' }, ...activeRequests]);
-                setNewService({ type: '', date: '', details: '' });
+                setNewService({ type: '', date: '', details: '', photoName: '' });
+                setHomeView('list'); // Return to list view immediately
 
                 setTimeout(() => {
                     setActiveRequests(current => 
@@ -90,6 +102,13 @@
                         )
                     );
                 }, 5000);
+            };
+
+            // Handle fake photo upload
+            const handlePhotoUpload = (e) => {
+                if(e.target.files.length > 0) {
+                    setNewService({...newService, photoName: e.target.files[0].name});
+                }
             };
 
             // --- 1. LOGIN & SIGNUP SCREENS ---
@@ -121,7 +140,7 @@
                                     <input type="text" required value={signupForm.name} onChange={(e) => setSignupForm({...signupForm, name: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g. Ramesh Kumar" />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Username (Must be unique)</label>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Username</label>
                                     <input type="text" required value={signupForm.username} onChange={(e) => setSignupForm({...signupForm, username: e.target.value.toLowerCase().replace(/\s+/g, '')})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g. ramesh_kumar99" />
                                 </div>
                                 <div>
@@ -130,7 +149,7 @@
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Complete Address</label>
-                                    <textarea required value={signupForm.address} onChange={(e) => setSignupForm({...signupForm, address: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="2" placeholder="House/Flat No, Street..."></textarea>
+                                    <textarea required value={signupForm.address} onChange={(e) => setSignupForm({...signupForm, address: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="2"></textarea>
                                 </div>
                                 <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition mt-2">Register</button>
                             </form>
@@ -155,7 +174,7 @@
                         </div>
                         <nav className="p-4 space-y-2">
                             <button 
-                                onClick={() => { setActiveTab('home'); setIsSidebarOpen(false); setIsEditingProfile(false); }}
+                                onClick={() => { setActiveTab('home'); setHomeView('list'); setIsSidebarOpen(false); setIsEditingProfile(false); }}
                                 className={`w-full text-left px-4 py-3 rounded-lg font-bold transition-all ${activeTab === 'home' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
                             >
                                 🏠 Home
@@ -192,7 +211,6 @@
                                     </svg>
                                 </button>
                                 
-                                {/* Header content changes based on active tab */}
                                 {activeTab === 'profile' ? (
                                     <div>
                                         <h1 className="text-3xl font-extrabold text-blue-900 tracking-tight">My Profile</h1>
@@ -208,52 +226,25 @@
                             </div>
                         </header>
 
-                        {/* --- TAB: HOME --- */}
+                        {/* --- TAB: HOME (Multi-Step Flow) --- */}
                         {activeTab === 'home' && (
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                                <div className="col-span-1">
-                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                                        <h2 className="text-xl font-bold text-gray-800 mb-4">Request a Service</h2>
-                                        <form onSubmit={handlePostService} className="space-y-4">
-                                            <div>
-                                                <label className="block text-sm font-semibold text-gray-700 mb-1">What service do you need?</label>
-                                                <select required value={newService.type} onChange={(e) => setNewService({...newService, type: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none bg-white">
-                                                    <option value="">Select a skill...</option>
-                                                    <option value="Plumber">Plumbing / Pipe Fitting</option>
-                                                    <option value="Electrician">Electrician / Wiring</option>
-                                                    <option value="Mason">Masonry / Construction</option>
-                                                    <option value="Carpenter">Carpentry / Woodwork</option>
-                                                    <option value="Painter">Painting</option>
-                                                </select>
-                                                
-                                                {/* Market Rate Calculator Widget */}
-                                                {newService.type && (
-                                                    <p className="text-sm text-blue-600 mt-2 bg-blue-50 p-2 rounded-md border border-blue-100">
-                                                        💡 Suggested Market Rate: <span className="font-bold">{marketRates[newService.type]}</span>
-                                                    </p>
-                                                )}
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-semibold text-gray-700 mb-1">When do you need them?</label>
-                                                <input type="date" required value={newService.date} onChange={(e) => setNewService({...newService, date: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-semibold text-gray-700 mb-1">Specific Details / Wage Offer</label>
-                                                <textarea required value={newService.details} onChange={(e) => setNewService({...newService, details: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="2" placeholder="e.g. Need to fix a leaking pipe. Offering ₹500."></textarea>
-                                            </div>
-                                            <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 transition shadow-md">Find Workers Now</button>
-                                        </form>
-                                    </div>
-                                </div>
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 min-h-[500px]">
+                                
+                                {/* Step 1: List View */}
+                                {homeView === 'list' && (
+                                    <>
+                                        <div className="flex justify-between items-center mb-8 pb-4 border-b border-gray-100">
+                                            <h2 className="text-2xl font-bold text-gray-800">Your Active Requests</h2>
+                                            <button onClick={() => setHomeView('form')} className="bg-blue-600 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-blue-700 transition shadow-md flex items-center space-x-2">
+                                                <span>+ Request Service</span>
+                                            </button>
+                                        </div>
 
-                                <div className="col-span-1 lg:col-span-2">
-                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 min-h-[400px]">
-                                        <h2 className="text-xl font-bold text-gray-800 mb-6">Your Active Requests</h2>
                                         {activeRequests.length === 0 ? (
                                             <div className="text-center text-gray-400 mt-20">
                                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto mb-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
                                                 <p>You have no active service requests.</p>
-                                                <p className="text-sm mt-1">Use the form on the left to hire someone.</p>
+                                                <p className="text-sm mt-1">Click the button above to hire someone.</p>
                                             </div>
                                         ) : (
                                             <div className="space-y-4">
@@ -261,20 +252,119 @@
                                                     <div key={req.id} className="border border-gray-200 rounded-xl p-5 flex flex-col md:flex-row justify-between items-center bg-gray-50">
                                                         <div className="w-full md:w-auto mb-4 md:mb-0">
                                                             <div className="flex items-center space-x-3 mb-1">
-                                                                <h3 className="font-extrabold text-lg text-gray-900">{req.type}</h3>
+                                                                <h3 className="font-extrabold text-xl text-gray-900">{req.type}</h3>
                                                                 <span className="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-1 rounded">Date: {req.date}</span>
                                                             </div>
                                                             <p className="text-sm text-gray-600 mb-2">{req.details}</p>
+                                                            {req.photoName && (
+                                                                <p className="text-xs text-blue-500 font-semibold flex items-center">
+                                                                    📎 Attached: {req.photoName}
+                                                                </p>
+                                                            )}
                                                         </div>
-                                                        <span className={`px-4 py-2 rounded-lg text-sm font-bold w-full md:w-auto text-center ${req.status.includes('Confirmed') ? 'bg-green-500 text-white' : 'bg-yellow-100 text-yellow-800 animate-pulse border border-yellow-300'}`}>
+                                                        <span className={`px-5 py-2.5 rounded-lg text-sm font-bold w-full md:w-auto text-center shadow-sm ${req.status.includes('Confirmed') ? 'bg-green-500 text-white' : 'bg-yellow-100 text-yellow-800 animate-pulse border border-yellow-300'}`}>
                                                             {req.status}
                                                         </span>
                                                     </div>
                                                 ))}
                                             </div>
                                         )}
+                                    </>
+                                )}
+
+                                {/* Step 2: Request Form View */}
+                                {homeView === 'form' && (
+                                    <div className="max-w-2xl mx-auto">
+                                        <div className="flex items-center mb-6">
+                                            <button onClick={() => setHomeView('list')} className="text-gray-400 hover:text-blue-600 font-semibold mr-4">← Back</button>
+                                            <h2 className="text-2xl font-bold text-gray-800">New Service Request</h2>
+                                        </div>
+
+                                        <form onSubmit={handleNextStep} className="space-y-6">
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-2">What service do you need?</label>
+                                                <select required value={newService.type} onChange={(e) => setNewService({...newService, type: e.target.value})} className="w-full rounded-xl border-gray-300 border p-4 focus:ring-2 focus:ring-blue-500 outline-none bg-white shadow-sm">
+                                                    <option value="">Select a skill...</option>
+                                                    <option value="Plumber">Plumbing / Pipe Fitting</option>
+                                                    <option value="Electrician">Electrician / Wiring</option>
+                                                    <option value="Mason">Masonry / Construction</option>
+                                                    <option value="Carpenter">Carpentry / Woodwork</option>
+                                                    <option value="Painter">Painting</option>
+                                                </select>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-2">When do you need them?</label>
+                                                <input type="date" required value={newService.date} onChange={(e) => setNewService({...newService, date: e.target.value})} className="w-full rounded-xl border-gray-300 border p-4 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-2">Specific Details</label>
+                                                <textarea required value={newService.details} onChange={(e) => setNewService({...newService, details: e.target.value})} className="w-full rounded-xl border-gray-300 border p-4 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" rows="3" placeholder="e.g. Need to fix a leaking pipe in the kitchen."></textarea>
+                                            </div>
+
+                                            {/* Photo Upload Section */}
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-2">Add a Photo (Optional)</label>
+                                                <div className="w-full border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:bg-gray-50 transition cursor-pointer relative">
+                                                    <input type="file" accept="image/*" onChange={handlePhotoUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                                    {newService.photoName ? (
+                                                        <p className="text-blue-600 font-bold">✅ Selected: {newService.photoName}</p>
+                                                    ) : (
+                                                        <div className="text-gray-500">
+                                                            <p className="font-semibold text-blue-600">Click to upload or drag and drop</p>
+                                                            <p className="text-sm mt-1">PNG, JPG up to 5MB. Helps workers understand the job clearly.</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <button type="submit" className="w-full bg-blue-600 text-white p-4 rounded-xl font-bold hover:bg-blue-700 transition shadow-md text-lg">
+                                                Next Step
+                                            </button>
+                                        </form>
                                     </div>
-                                </div>
+                                )}
+
+                                {/* Step 3: Estimate & Confirmation View */}
+                                {homeView === 'estimate' && (
+                                    <div className="max-w-xl mx-auto text-center py-8">
+                                        <button onClick={() => setHomeView('form')} className="text-gray-400 hover:text-blue-600 font-semibold absolute left-10 top-10">← Edit Details</button>
+                                        
+                                        <div className="bg-blue-50 rounded-full w-24 h-24 flex items-center justify-center mx-auto mb-6">
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                        </div>
+                                        
+                                        <h2 className="text-3xl font-extrabold text-gray-900 mb-2">Service Estimate</h2>
+                                        <p className="text-gray-500 mb-8">Review the market rate and estimated time for your request.</p>
+
+                                        <div className="bg-white border-2 border-gray-100 rounded-2xl p-6 text-left space-y-6 shadow-sm mb-8">
+                                            <div className="flex justify-between items-center border-b border-gray-100 pb-4">
+                                                <span className="text-gray-500 font-bold uppercase text-sm tracking-wider">Service Selected</span>
+                                                <span className="text-xl font-extrabold text-gray-900">{newService.type}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center border-b border-gray-100 pb-4">
+                                                <span className="text-gray-500 font-bold uppercase text-sm tracking-wider">Estimated Time</span>
+                                                <span className="text-lg font-bold text-orange-600 bg-orange-50 px-3 py-1 rounded-lg">
+                                                    ⏳ {serviceEstimates[newService.type].time}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-gray-500 font-bold uppercase text-sm tracking-wider">Estimated Cost</span>
+                                                <span className="text-2xl font-extrabold text-green-600">
+                                                    {serviceEstimates[newService.type].cost}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <button onClick={handleConfirmJob} className="w-full bg-green-600 text-white p-4 rounded-xl font-bold hover:bg-green-700 transition shadow-lg text-lg flex justify-center items-center space-x-2">
+                                            <span>Confirm & Find Workers</span>
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -305,13 +395,10 @@
                                 
                                 {isEditingProfile ? (
                                     <form onSubmit={handleSaveProfile} className="max-w-md space-y-5">
-                                        
-                                        {/* UNEDITABLE USERNAME FIELD */}
                                         <div>
                                             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Username (Cannot be changed)</label>
-                                            <input type="text" readOnly value={`@${customerData.username}`} className="w-full rounded-lg border-gray-200 border p-3 bg-gray-100 text-gray-500 outline-none cursor-not-allowed font-semibold" title="Usernames cannot be changed" />
+                                            <input type="text" readOnly value={`@${customerData.username}`} className="w-full rounded-lg border-gray-200 border p-3 bg-gray-100 text-gray-500 outline-none cursor-not-allowed font-semibold" />
                                         </div>
-
                                         <div>
                                             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Full Name</label>
                                             <input type="text" required value={editForm.name} onChange={(e) => setEditForm({...editForm, name: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" />
@@ -324,7 +411,6 @@
                                             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Default Address</label>
                                             <textarea required value={editForm.address} onChange={(e) => setEditForm({...editForm, address: e.target.value})} className="w-full rounded-lg border-gray-300 border p-3 focus:ring-2 focus:ring-blue-500 outline-none" rows="3"></textarea>
                                         </div>
-                                        
                                         <div className="flex space-x-3 pt-4 border-t border-gray-100">
                                             <button type="button" onClick={() => { setIsEditingProfile(false); setEditForm(customerData); }} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-semibold w-full">Cancel</button>
                                             <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-sm w-full">Save Changes</button>
