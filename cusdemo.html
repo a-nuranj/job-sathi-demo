@@ -24,7 +24,7 @@
             const [activeTab, setActiveTab] = useState('home'); 
             const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-            // Home Tab Multi-Step Flow ('list', 'form', 'voice', 'estimate')
+            // Home Tab Flow ('list', 'form', 'voice')
             const [homeView, setHomeView] = useState('list'); 
 
             // User & Data States
@@ -50,28 +50,34 @@
             ];
             const displayLocations = [...new Set([userLocation, ...commonLocations])];
 
-            // Upgraded Estimation Engine
-            const [serviceEstimates, setServiceEstimates] = useState({
-                Plumber: { cost: '₹600 - ₹800', time: '2 - 4 Hours' },
-                Electrician: { cost: '₹700 - ₹900', time: '1 - 3 Hours' },
-                Mason: { cost: '₹800 - ₹1000', time: 'Full Day (8 Hours)' },
-                Carpenter: { cost: '₹750 - ₹950', time: '4 - 6 Hours' },
-                Painter: { cost: '₹500 - ₹700', time: 'Full Day (8 Hours)' }
-            });
-
             const pastServices = [
                 { id: 101, type: 'Electrician', date: '2026-06-15', status: 'Completed', worker: 'Raju Bhai', rating: '⭐️⭐️⭐️⭐️' },
                 { id: 102, type: 'Painter', date: '2026-05-10', status: 'Completed', worker: 'Suresh Kumar', rating: '⭐️⭐️⭐️⭐️⭐️' }
             ];
 
-            const handleSignup = (e) => {
+            const handleSignup = async (e) => {
                 e.preventDefault();
-                setCustomerData(signupForm);
-                setEditForm(signupForm);
-                setUserLocation(signupForm.address);
-                setCurrentView('dashboard');
-                setActiveTab('home');
-                setHomeView('list');
+
+                const response = await fetch("http://127.0.0.1:5000/signup", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(signupForm)
+                });
+
+                const result = await response.json();
+
+                alert(result.message);
+
+                if(result.success){
+                    setCustomerData(signupForm);
+                    setEditForm(signupForm);
+                    setUserLocation(signupForm.address);
+                    setCurrentView("dashboard");
+                    setActiveTab("home");
+                    setHomeView("list");
+                }
             };
 
             const handleLogin = (e) => {
@@ -97,6 +103,10 @@
 
             const handleDirectSubmit = (e) => {
                 e.preventDefault();
+                if (!newService.type || !newService.date || !newService.details) {
+                    alert("Please fill out the Service, Date, and Details fields to post a job.");
+                    return;
+                }
                 handleConfirmJob();
             };
 
@@ -158,57 +168,6 @@
                     );
                 } else {
                     setUserLocation("GPS not supported by browser");
-                }
-            };
-
-            // Transitions to Estimate Page AND Calls Gemini AI
-            const handleNextStep = async (e) => {
-                e.preventDefault();
-                
-                if (!newService.type || !newService.date || !newService.details) {
-                    alert("Please fill out the Service, Date, and Details fields to get an AI estimate.");
-                    return;
-                }
-
-                setHomeView('estimate');
-                
-                setServiceEstimates(prev => ({
-                    ...prev,
-                    [newService.type]: { cost: 'Calculating...', time: 'Analyzing details...' }
-                }));
-
-                const API_KEY = 'gen-lang-client-0374876569'; 
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
-
-                const prompt = `
-                    You are an expert blue-collar job estimator in India. 
-                    A customer needs a ${newService.type}. 
-                    Their specific details: "${newService.details}".
-                    Estimate the time and cost in Indian Rupees (₹). 
-                    Respond ONLY with a valid JSON object in this exact format: {"cost": "₹X - ₹Y", "time": "Z Hours"}
-                    Do not include markdown blocks or any other text.
-                `;
-
-                try {
-                    const response = await fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-                    });
-
-                    const data = await response.json();
-                    let aiText = data.candidates[0].content.parts[0].text;
-                    aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
-                    const aiEstimate = JSON.parse(aiText);
-
-                    setServiceEstimates(prev => ({ ...prev, [newService.type]: aiEstimate }));
-
-                } catch (error) {
-                    console.error("Gemini AI Error:", error);
-                    setServiceEstimates(prev => ({
-                        ...prev,
-                        [newService.type]: { cost: '₹500 - ₹1000', time: 'Pending Assessment' }
-                    }));
                 }
             };
 
@@ -349,7 +308,7 @@
                             </div>
                         </header>
 
-                        {/* --- TAB: HOME (Multi-Step Flow) --- */}
+                        {/* --- TAB: HOME --- */}
                         {activeTab === 'home' && (
                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 min-h-[500px]">
                                 
@@ -484,11 +443,8 @@
                                                     </div>
                                                 </div>
 
-                                                <div className="pt-4 flex flex-col md:flex-row gap-4">
-                                                    <button onClick={handleNextStep} className="flex-1 bg-blue-50 text-blue-700 border-2 border-blue-200 p-4 rounded-xl font-bold hover:bg-blue-100 transition shadow-sm text-lg flex justify-center items-center space-x-2">
-                                                        <span>✨ Get AI Estimate</span>
-                                                    </button>
-                                                    <button onClick={handleDirectSubmit} className="flex-1 bg-green-600 text-white p-4 rounded-xl font-bold hover:bg-green-700 transition shadow-md text-lg flex justify-center items-center">
+                                                <div className="pt-4 flex flex-col gap-4">
+                                                    <button onClick={handleDirectSubmit} className="w-full bg-green-600 text-white p-4 rounded-xl font-bold hover:bg-green-700 transition shadow-md text-lg flex justify-center items-center">
                                                         <span>Post Job Directly</span>
                                                     </button>
                                                 </div>
@@ -551,57 +507,12 @@
                                                 </div>
                                             </div>
 
-                                            <div className="flex flex-col md:flex-row gap-4 pt-2">
-                                                <button type="button" onClick={handleNextStep} className="flex-1 bg-blue-50 text-blue-700 border-2 border-blue-200 p-4 rounded-xl font-bold hover:bg-blue-100 transition shadow-sm text-lg flex justify-center items-center space-x-2">
-                                                    <span>✨ Get AI Estimate</span>
-                                                </button>
-                                                <button type="submit" className="flex-1 bg-green-600 text-white p-4 rounded-xl font-bold hover:bg-green-700 transition shadow-md text-lg flex justify-center items-center">
+                                            <div className="flex flex-col gap-4 pt-2">
+                                                <button type="submit" className="w-full bg-green-600 text-white p-4 rounded-xl font-bold hover:bg-green-700 transition shadow-md text-lg flex justify-center items-center">
                                                     <span>Post Job Directly</span>
                                                 </button>
                                             </div>
                                         </form>
-                                    </div>
-                                )}
-
-                                {/* Step 3: Estimate & Confirmation View */}
-                                {homeView === 'estimate' && (
-                                    <div className="max-w-xl mx-auto text-center py-8 animate-fade-in">
-                                        <div className="bg-blue-50 rounded-full w-24 h-24 flex items-center justify-center mx-auto mb-6">
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                            </svg>
-                                        </div>
-                                        
-                                        <h2 className="text-3xl font-extrabold text-gray-900 mb-2">Service Estimate</h2>
-                                        <p className="text-gray-500 mb-8">Review the market rate and estimated time for your request.</p>
-
-                                        <div className="bg-white border-2 border-gray-100 rounded-2xl p-6 text-left space-y-6 shadow-sm mb-8">
-                                            <div className="flex justify-between items-center border-b border-gray-100 pb-4">
-                                                <span className="text-gray-500 font-bold uppercase text-sm tracking-wider">Service Selected</span>
-                                                <span className="text-xl font-extrabold text-gray-900">{newService.type}</span>
-                                            </div>
-                                            <div className="flex justify-between items-center border-b border-gray-100 pb-4">
-                                                <span className="text-gray-500 font-bold uppercase text-sm tracking-wider">Estimated Time</span>
-                                                <span className="text-lg font-bold text-orange-600 bg-orange-50 px-3 py-1 rounded-lg">
-                                                    ⏳ {serviceEstimates[newService.type]?.time || 'Calculating...'}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between items-center">
-                                                <span className="text-gray-500 font-bold uppercase text-sm tracking-wider">Estimated Cost</span>
-                                                <span className="text-2xl font-extrabold text-green-600">
-                                                    {serviceEstimates[newService.type]?.cost || 'Calculating...'}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex flex-col md:flex-row gap-4">
-                                            <button onClick={() => setHomeView('list')} className="flex-1 bg-white border-2 border-gray-200 text-gray-600 p-4 rounded-xl font-bold hover:bg-gray-50 transition shadow-sm text-lg">
-                                                Go Back
-                                            </button>
-                                            <button onClick={handleConfirmJob} className="flex-[2] w-full bg-green-600 text-white p-4 rounded-xl font-bold hover:bg-green-700 transition shadow-lg text-lg flex justify-center items-center space-x-2">
-                                                <span>Confirm & Find Workers</span>
-                                            </button>
-                                        </div>
                                     </div>
                                 )}
                             </div>
