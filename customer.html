@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VELA - Customer Portal</title>
+    
+    <!-- Styling and React -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- FIREBASE CDN (Compat libraries for Realtime Database & Storage) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+    <!-- ✅ ADDED FIREBASE STORAGE -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyACjDUvLGLETIWevuzutrzngzc_2TO6yd8",
+            authDomain: "vela-cc8a5.firebaseapp.com",
+            databaseURL: "https://vela-cc8a5-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "vela-cc8a5",
+            storageBucket: "vela-cc8a5.firebasestorage.app",
+            messagingSenderId: "603919577853",
+            appId: "1:603919577853:web:0ce24d0e14d9767eb18494",
+            measurementId: "G-ZJKWN8QR8B"
+        };
+
+        // Initialize Firebase safely
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.database(); 
+        const storage = firebase.storage(); // ✅ INITIALIZED STORAGE
+
+        function App() {
+            // Global App State
+            const [currentUser, setCurrentUser] = useState(null);
+            const [isLoading, setIsLoading] = useState(true);
+            const [isSubmitting, setIsSubmitting] = useState(false); // New state for submission loading
+            const [authView, setAuthView] = useState('login'); 
+            
+            // Layout & Menu States
+            const [isMenuOpen, setIsMenuOpen] = useState(false);
+            const [currentView, setCurrentView] = useState('home'); 
+
+            // User Profile Data
+            const [userProfile, setUserProfile] = useState({});
+            const [editProfileData, setEditProfileData] = useState({ name: '', phone: '', address: '' });
+
+            // Form States
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [signupData, setSignupData] = useState({ name: '', username: '', phone: '', address: '' });
+            
+            // ✅ Location & Request States (Updated for new fields)
+            const [currentLocation, setCurrentLocation] = useState('');
+            const [newRequest, setNewRequest] = useState({ service: 'Plumber', date: '', details: '', imageFile: null });
+            const [activeRequests, setActiveRequests] = useState([]);
+
+            const predefinedLocations = [
+                "Ernakulam, Kerala", "Pezhakkappilly, Ernakulam", "Kochi, Kerala", 
+                "Trivandrum, Kerala", "Kozhikode, Kerala", "Thrissur, Kerala",
+                "Bangalore, Karnataka", "Chennai, Tamil Nadu", "Mumbai, Maharashtra"
+            ];
+
+            // ==========================================
+            // 1. AUTHENTICATION & DATABASE LISTENER
+            // ==========================================
+            useEffect(() => {
+                const unsubscribe = auth.onAuthStateChanged((user) => {
+                    if (user) {
+                        setCurrentUser(user);
+                        
+                        db.ref('users/' + user.uid).once('value').then((snapshot) => {
+                            if (snapshot.exists()) {
+                                const data = snapshot.val();
+                                setUserProfile(data);
+                                setEditProfileData({
+                                    name: data.name || '',
+                                    phone: data.phone || '',
+                                    address: data.address || ''
+                                });
+                            } else {
+                                setUserProfile({ name: 'User', username: 'customer', address: '' });
+                            }
+                            setIsLoading(false);
+                        }).catch(err => {
+                            console.error(err);
+                            setIsLoading(false);
+                        });
+                        
+                        const requestsRef = db.ref('requests').orderByChild('userId').equalTo(user.uid);
+                        requestsRef.on('value', (snapshot) => {
+                            const reqs = [];
+                            snapshot.forEach((childSnapshot) => {
+                                reqs.push({ id: childSnapshot.key, ...childSnapshot.val() });
+                            });
+                            setActiveRequests(reqs.reverse());
+                        });
+
+                    } else {
+                        setCurrentUser(null);
+                        setUserProfile({});
+                        setActiveRequests([]);
+                        setIsLoading(false);
+                    }
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // ==========================================
+            // 2. AUTHENTICATION & PROFILE FUNCTIONS
+            // ==========================================
+            const switchAuthView = (view) => {
+                setAuthView(view);
+                setEmail('');
+                setPassword('');
+            };
+
+            const handleSignup = async (e) => {
+                e.preventDefault();
+                setIsLoading(true);
+                try {
+                    const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                    const user = userCredential.user;
+
+                    await db.ref('users/' + user.uid).set({
+                        name: signupData.name,
+                        username: signupData.username,
+                        phone: signupData.phone,
+                        address: signupData.address,
+                        email: email,
+                        createdAt: firebase.database.ServerValue.TIMESTAMP
+                    });
+                } catch (error) {
+                    alert("Registration Error: " + error.message);
+                    setIsLoading(false);
+                }
+            };
+
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                setIsLoading(true);
+                try {
+                    await auth.signInWithEmailAndPassword(email, password);
+                } catch (error) {
+                    alert("Login Error: " + error.message);
+                    setIsLoading(false);
+                }
+            };
+
+            const handleLogout = () => {
+                if (currentUser) {
+                    db.ref('requests').orderByChild('userId').equalTo(currentUser.uid).off();
+                }
+                auth.signOut();
+                setIsMenuOpen(false);
+                setCurrentView('home');
+            };
+
+            const handleUpdateProfile = async (e) => {
+                e.preventDefault();
+                try {
+                    await db.ref('users/' + currentUser.uid).update({
+                        name: editProfileData.name,
+                        phone: editProfileData.phone,
+                        address: editProfileData.address
+                    });
+                    
+                    setUserProfile(prev => ({ ...prev, ...editProfileData }));
+                    alert("Profile updated successfully!");
+                    setCurrentView('home');
+                } catch (error) {
+                    alert("Error updating profile: " + error.message);
+                }
+            };
+
+            // ==========================================
+            // 3. LOCATION & DATABASE FUNCTIONS
+            // ==========================================
+            const detectLocation = () => {
+                setCurrentLocation("Locating...");
+                if ("geolocation" in navigator) {
+                    navigator.geolocation.getCurrentPosition(
+                        async (position) => {
+                            try {
+                                const { latitude, longitude } = position.coords;
+                                const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+                                const data = await res.json();
+                                const locality = data.address.neighbourhood || data.address.suburb || data.address.village || data.address.town;
+                                const district = data.address.state_district || data.address.city_district || data.address.city;
+                                
+                                setCurrentLocation(locality && district ? `${locality}, ${district}` : data.display_name);
+                            } catch (err) {
+                                setCurrentLocation("Error getting area name");
+                            }
+                        },
+                        (error) => { setCurrentLocation("Location Permission Denied"); },
+                        { enableHighAccuracy: true }
+                    );
+                } else {
+                    setCurrentLocation("GPS not supported");
+                }
+            };
+
+            const submitJobRequest = async (e) => {
+                e.preventDefault();
+                if(!currentLocation || currentLocation === "Locating...") {
+                    alert("Please provide or detect a valid location before submitting.");
+                    return;
+                }
+                
+                setIsSubmitting(true);
+                
+                try {
+                    let imageUrl = null;
+
+                    // ✅ Upload Image to Firebase Storage if selected
+                    if (newRequest.imageFile) {
+                        const fileExt = newRequest.imageFile.name.split('.').pop();
+                        const fileName = `job_images/${currentUser.uid}_${Date.now()}.${fileExt}`;
+                        const imageRef = storage.ref().child(fileName);
+                        
+                        await imageRef.put(newRequest.imageFile);
+                        imageUrl = await imageRef.getDownloadURL();
+                    }
+
+                    // Push the complete request to the Realtime Database
+                    await db.ref('requests').push({
+                        userId: currentUser.uid,
+                        customerName: userProfile.name || 'Customer',
+                        service: newRequest.service,
+                        date: newRequest.date,
+                        details: newRequest.details, // Replaced Address with Details
+                        imageUrl: imageUrl,          // Added Image URL
+                        locationArea: currentLocation, 
+                        status: 'Pending Worker Assignment',
+                        timestamp: firebase.database.ServerValue.TIMESTAMP
+                    });
+                    
+                    alert("Request submitted successfully!");
+                    setNewRequest({ service: 'Plumber', date: '', details: '', imageFile: null }); // Reset form
+                    
+                    // Reset file input visually
+                    document.getElementById('image-upload-input').value = ''; 
+                } catch (error) {
+                    console.error(error);
+                    alert("Error submitting request. (If image upload failed, check Firebase Storage Rules). Error: " + error.message);
+                } finally {
+                    setIsSubmitting(false);
+                }
+            };
+
+            // ==========================================
+            // UI RENDERING
+            // ==========================================
+            if (isLoading) {
+                return <div className="min-h-screen flex items-center justify-center text-xl font-bold text-gray-500">Loading Application...</div>;
+            }
+
+            // --- AUTHENTICATION SCREENS ---
+            if (!currentUser) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-4 bg-gray-100">
+                        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-200">
+                            <h1 className="text-4xl font-extrabold text-blue-900 text-center mb-6 tracking-wide">VELA</h1>
+                            
+                            {authView === 'login' ? (
+                                <form onSubmit={handleLogin} className="space-y-4">
+                                    <h2 className="text-xl font-bold text-gray-700">Log In</h2>
+                                    <input type="email" required value={email} placeholder="Email Address" onChange={(e) => setEmail(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500" />
+                                    <input type="password" required value={password} placeholder="Password" onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500" />
+                                    <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 shadow-md transition">Log In</button>
+                                    <p className="text-center text-sm text-gray-500 mt-4">
+                                        Don't have an account? <span onClick={() => switchAuthView('signup')} className="text-blue-600 font-bold cursor-pointer hover:underline">Sign Up</span>
+                                    </p>
+                                </form>
+                            ) : (
+                                <form onSubmit={handleSignup} className="space-y-3">
+                                    <h2 className="text-xl font-bold text-gray-700">Create Account</h2>
+                                    <input type="email" required value={email} placeholder="Email Address" onChange={(e) => setEmail(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <input type="password" required value={password} placeholder="Password (min 6 chars)" onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <div className="border-t border-gray-200 my-2 pt-2"></div>
+                                    <input type="text" required placeholder="Full Name" onChange={(e) => setSignupData({...signupData, name: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <input type="text" required placeholder="Username" onChange={(e) => setSignupData({...signupData, username: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <input type="tel" required placeholder="Phone Number" onChange={(e) => setSignupData({...signupData, phone: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                    <textarea required placeholder="Home Address" onChange={(e) => setSignupData({...signupData, address: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" rows="2"></textarea>
+                                    <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 shadow-md transition">Register</button>
+                                    <p className="text-center text-sm text-gray-500 mt-4">
+                                        Already have an account? <span onClick={() => switchAuthView('login')} className="text-blue-600 font-bold cursor-pointer hover:underline">Log In</span>
+                                    </p>
+                                </form>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- MAIN APPLICATION SCREEN ---
+            return (
+                <div className="min-h-screen bg-gray-100 flex flex-col w-full">
+                    
+                    {/* FULL WIDTH HEADER */}
+                    <div className="bg-blue-900 w-full relative z-20 shadow-md">
+                        <div className="w-full px-6 py-4 flex justify-between items-center">
+                            <h1 className="text-3xl font-extrabold text-white tracking-widest uppercase">VELA</h1>
+                            
+                            <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-white focus:outline-none hover:text-blue-200 transition">
+                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16"></path>
+                                </svg>
+                            </button>
+                        </div>
+
+                        {isMenuOpen && (
+                            <div className="absolute right-4 top-16 bg-white w-48 rounded-lg shadow-xl py-2 border border-gray-100 flex flex-col z-30">
+                                <button onClick={() => {setCurrentView('home'); setIsMenuOpen(false);}} className={`px-4 py-3 text-left font-bold ${currentView === 'home' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>Home</button>
+                                <button onClick={() => {setCurrentView('profile'); setIsMenuOpen(false);}} className={`px-4 py-3 text-left font-bold border-t border-b border-gray-100 ${currentView === 'profile' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>Profile</button>
+                                <button onClick={handleLogout} className="px-4 py-3 text-left text-red-600 font-bold hover:bg-red-50">Log Out</button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* SUB-HEADER: GREETING & LOCATION */}
+                    <div className="bg-blue-800 w-full px-6 py-5 border-t border-blue-700 shadow-inner">
+                        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div className="text-white">
+                                <p className="text-sm text-blue-200 uppercase tracking-wider font-bold">Welcome Back</p>
+                                <h2 className="text-2xl font-semibold">{userProfile.name}</h2>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                <div className="relative flex-1 sm:w-72">
+                                    <datalist id="location-list">
+                                        {predefinedLocations.map((loc, idx) => <option key={idx} value={loc} />)}
+                                    </datalist>
+                                    <span className="absolute left-3 top-3 text-gray-500">📍</span>
+                                    <input 
+                                        type="text" 
+                                        list="location-list"
+                                        placeholder="Type or select location..." 
+                                        value={currentLocation} 
+                                        onChange={(e) => setCurrentLocation(e.target.value)}
+                                        className="w-full pl-9 pr-3 py-3 rounded-lg text-black outline-none focus:ring-2 focus:ring-blue-400 font-medium"
+                                    />
+                                </div>
+                                <button onClick={detectLocation} className="bg-white text-blue-900 px-5 py-3 rounded-lg font-bold shadow hover:bg-gray-100 transition whitespace-nowrap">
+                                    Auto Detect
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* MAIN CONTENT AREA */}
+                    <div className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6">
+                        
+                        {currentView === 'home' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                                
+                                {/* LEFT SECTION: MAKE REQUEST */}
+                                <div className="bg-white p-6 sm:p-8 rounded-2xl shadow border border-gray-200">
+                                    <h3 className="text-xl font-extrabold text-blue-900 mb-6 border-b pb-3">➕ Make a New Request</h3>
+                                    
+                                    <form onSubmit={submitJobRequest} className="space-y-5">
+                                        
+                                        {/* ✅ DROPDOWN FOR SERVICE TYPE */}
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">What service is needed?</label>
+                                            <select 
+                                                required 
+                                                value={newRequest.service} 
+                                                onChange={(e) => setNewRequest({...newRequest, service: e.target.value})} 
+                                                className="w-full border border-gray-300 rounded-xl p-3 bg-white outline-none focus:ring-2 focus:ring-blue-500 transition cursor-pointer"
+                                            >
+                                                <option value="Plumber">Plumber</option>
+                                                <option value="Electrician">Electrician</option>
+                                                <option value="Cleaner">Cleaner</option>
+                                                <option value="Carpenter">Carpenter</option>
+                                                <option value="Painter">Painter</option>
+                                                <option value="Appliance Repair">Appliance Repair</option>
+                                                <option value="Mason">Mason</option>
+                                                <option value="Other">Other</option>
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">When do you need it?</label>
+                                            <input type="date" required value={newRequest.date} onChange={(e) => setNewRequest({...newRequest, date: e.target.value})} className="w-full border border-gray-300 rounded-xl p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 transition cursor-pointer" />
+                                        </div>
+                                        
+                                        {/* ✅ NEW DETAILS TEXTAREA */}
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">More details about the problem</label>
+                                            <textarea required placeholder="Describe the issue you are facing..." value={newRequest.details} onChange={(e) => setNewRequest({...newRequest, details: e.target.value})} className="w-full border border-gray-300 rounded-xl p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 transition" rows="3"></textarea>
+                                        </div>
+
+                                        {/* ✅ NEW FILE UPLOAD INPUT */}
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">Upload Image of the problem (Optional)</label>
+                                            <input 
+                                                id="image-upload-input"
+                                                type="file" 
+                                                accept="image/*" 
+                                                onChange={(e) => setNewRequest({...newRequest, imageFile: e.target.files[0]})} 
+                                                className="w-full border border-gray-300 rounded-xl p-2 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 transition text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" 
+                                            />
+                                        </div>
+
+                                        <button disabled={isSubmitting} type="submit" className={`w-full text-white p-4 rounded-xl font-bold text-lg shadow-lg transition ${isSubmitting ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                                            {isSubmitting ? 'Uploading & Submitting...' : 'Submit Request'}
+                                        </button>
+                                    </form>
+                                </div>
+
+                                {/* RIGHT SECTION: ACTIVE REQUESTS */}
+                                <div className="bg-white p-6 sm:p-8 rounded-2xl shadow border border-gray-200 flex flex-col h-full min-h-[400px]">
+                                    <h3 className="text-xl font-extrabold text-blue-900 mb-6 border-b pb-3">📋 Active Requests</h3>
+                                    
+                                    <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+                                        {activeRequests.length === 0 ? (
+                                            <div className="text-center text-gray-400 py-12 border-2 border-dashed border-gray-200 rounded-2xl">
+                                                <p className="text-3xl mb-3">🤷‍♂️</p>
+                                                <p className="font-bold">No active requests found.</p>
+                                            </div>
+                                        ) : (
+                                            activeRequests.map((req) => (
+                                                <div key={req.id} className="border border-gray-200 rounded-2xl p-5 hover:shadow-md transition bg-gray-50 relative overflow-hidden">
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <h4 className="font-extrabold text-lg text-gray-900">{req.service}</h4>
+                                                        <span className={`px-3 py-1 text-xs font-bold rounded-full ${req.status.includes('Pending') ? 'bg-yellow-200 text-yellow-800' : 'bg-green-200 text-green-800'}`}>
+                                                            {req.status}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-600 mb-1"><strong>Date:</strong> {req.date}</p>
+                                                    <p className="text-sm text-gray-600 mb-2"><strong>Details:</strong> {req.details}</p>
+                                                    
+                                                    {/* ✅ RENDER IMAGE IF IT EXISTS */}
+                                                    {req.imageUrl && (
+                                                        <div className="mt-3 mb-2">
+                                                            <img src={req.imageUrl} alt="Problem" className="h-20 w-32 object-cover rounded-lg border border-gray-300 shadow-sm" />
+                                                        </div>
+                                                    )}
+
+                                                    <p className="text-sm text-blue-600 font-semibold mt-3 bg-blue-100 inline-block px-2 py-1 rounded">📍 {req.locationArea || 'Location not provided'}</p>
+                                                    
+                                                    <div className={`absolute bottom-0 left-0 w-full h-1 ${req.status.includes('Pending') ? 'bg-yellow-400' : 'bg-green-500'}`}></div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+
+                            </div>
+                        )}
+
+                        {/* VIEW: PROFILE EDITOR */}
+                        {currentView === 'profile' && (
+                            <div className="max-w-2xl mx-auto bg-white p-6 sm:p-10 rounded-2xl shadow-lg border border-gray-200">
+                                <h2 className="text-3xl font-extrabold text-blue-900 mb-2">My Profile</h2>
+                                <p className="text-gray-500 mb-8 pb-4 border-b">Update your personal details below.</p>
+                                
+                                <form onSubmit={handleUpdateProfile} className="space-y-5">
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-500 mb-2">Username (Cannot be changed)</label>
+                                        <input type="text" disabled value={userProfile.username || ''} className="w-full border border-gray-200 rounded-xl p-3 bg-gray-100 text-gray-500 cursor-not-allowed" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">Full Name</label>
+                                        <input type="text" required value={editProfileData.name} onChange={(e) => setEditProfileData({...editProfileData, name: e.target.value})} className="w-full border border-gray-300 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">Phone Number</label>
+                                        <input type="tel" required value={editProfileData.phone} onChange={(e) => setEditProfileData({...editProfileData, phone: e.target.value})} className="w-full border border-gray-300 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">Default Address</label>
+                                        <textarea required value={editProfileData.address} onChange={(e) => setEditProfileData({...editProfileData, address: e.target.value})} className="w-full border border-gray-300 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500" rows="3"></textarea>
+                                    </div>
+                                    <div className="pt-4 flex gap-4">
+                                        <button type="submit" className="flex-1 bg-green-600 text-white p-3 rounded-xl font-bold text-lg hover:bg-green-700 shadow-lg transition">Save Changes</button>
+                                        <button type="button" onClick={() => setCurrentView('home')} className="flex-1 bg-gray-200 text-gray-700 p-3 rounded-xl font-bold text-lg hover:bg-gray-300 transition">Cancel</button>
+                                    </div>
+                                </form>
+                            </div>
+                        )}
+
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
