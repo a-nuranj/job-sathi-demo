@@ -66,7 +66,7 @@
             const [aadharLogin, setAadharLogin] = useState('');
             const [password, setPassword] = useState('');
             const [signupData, setSignupData] = useState({ 
-                language: 'English', name: '', phone: '', address: '', aadhar: '', job: 'Plumber', experience: '0-1 Years' 
+                name: '', phone: '', address: '', aadhar: '', job: 'Plumber', experience: '0-1 Years' 
             });
 
             // ⚡ VAPI / GROK STATES
@@ -83,6 +83,7 @@
             useEffect(() => {
                 import('https://esm.sh/@vapi-ai/web').then(({ default: Vapi }) => {
                     
+                    // ⚠️ PASTE YOUR VAPI PUBLIC KEY HERE
                     const vapiInstance = new Vapi("f8748ad2-c541-46a6-8f99-ce26566880e9");
                     
                     vapiInstance.on('call-start', () => setCallStatus('active'));
@@ -94,34 +95,21 @@
                             setMessages(prev => [...prev, { role: msg.role, text: msg.transcript }]);
                         }
                         
-                        // 🔥 BULLETPROOF TOOL CATCHER (Catches both old & new Vapi formats)
-                        if (msg.type === 'tool-calls' || msg.type === 'function-call') {
-                            console.log("🚨 VAPI TOOL TRIGGERED:", msg); 
+                        // ⚡ INTERCEPT AI FUNCTION CALLS & PARSE JSON
+                        if (msg.type === 'tool-calls') {
+                            console.log("Tool Called by Vapi:", msg.toolCalls[0]); // Debugging
+                            const toolCall = msg.toolCalls[0];
                             
-                            let funcName = '';
-                            let extractedData = {};
-                            let callId = '';
-
-                            if (msg.type === 'tool-calls') {
-                                const toolCall = msg.toolCalls[0];
-                                funcName = toolCall.function.name;
-                                callId = toolCall.id;
-                                extractedData = toolCall.function.arguments;
-                                if (typeof extractedData === 'string') {
-                                    extractedData = JSON.parse(extractedData);
-                                }
-                            } else if (msg.type === 'function-call') {
-                                funcName = msg.functionCall.name;
-                                extractedData = msg.functionCall.parameters;
-                                callId = msg.id || 'mock-id';
+                            // 🐛 BUG FIX: Parse the arguments string into a real JSON object!
+                            let extractedData = toolCall.function.arguments;
+                            if (typeof extractedData === 'string') {
+                                extractedData = JSON.parse(extractedData);
                             }
 
-                            console.log(`📤 Data prepared for ${funcName}:`, extractedData);
-
-                            if (funcName === 'login_worker') {
-                                handleVoiceLogin(extractedData, callId, vapiInstance);
-                            } else if (funcName === 'register_worker') {
-                                handleVoiceRegistration(extractedData, callId, vapiInstance);
+                            if (toolCall.function.name === 'login_worker') {
+                                handleVoiceLogin(extractedData, toolCall.id, vapiInstance);
+                            } else if (toolCall.function.name === 'register_worker') {
+                                handleVoiceRegistration(extractedData, toolCall.id, vapiInstance);
                             }
                         }
                     });
@@ -218,15 +206,13 @@
                 const cleanAadhar = data.aadhar ? data.aadhar.replace(/\D/g, '') : '';
                 const cleanPass = data.password ? data.password.replace(/\s/g, '').toLowerCase() : '';
                 
-                console.log(`🔐 Attempting Voice Login with Aadhar: ${cleanAadhar}`);
-
                 try {
                     const mappedEmail = `${cleanAadhar}@worker.vela.com`;
                     await auth.signInWithEmailAndPassword(mappedEmail, cleanPass);
                     vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: "Login Success. Terminating call." });
                 } catch (error) {
-                    console.error("❌ Firebase Login Error:", error.message);
-                    vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: "Login failed. Ask them to verify their Aadhar and password." });
+                    console.error("Login Error:", error);
+                    vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: "Login failed. Ask them to verify their details." });
                 }
             };
 
@@ -234,15 +220,6 @@
                 const cleanAadhar = data.aadhar ? data.aadhar.replace(/\D/g, '') : '';
                 const cleanPass = data.password ? data.password.replace(/\s/g, '').toLowerCase() : '';
                 
-                console.log(`📝 Attempting Voice Registration for: ${data.name}`);
-
-                // FIREBASE REQUIRES 6+ CHARACTERS FOR PASSWORD
-                if (cleanPass.length < 6) {
-                    console.warn("⚠️ Password too short! Telling AI to ask for a longer one.");
-                    vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: "Registration failed: Password must be at least 6 characters. Ask the user for a new, longer password." });
-                    return;
-                }
-
                 try {
                     const mappedEmail = `${cleanAadhar}@worker.vela.com`;
                     const userCredential = await auth.createUserWithEmailAndPassword(mappedEmail, cleanPass);
@@ -250,7 +227,6 @@
 
                     // Immediately save to Firebase!
                     await db.ref('workers/' + user.uid).set({
-                        language: data.language || 'English',
                         name: data.name || 'Unknown',
                         phone: data.phone || 'Unknown',
                         address: data.address || 'Unknown',
@@ -260,11 +236,10 @@
                         createdAt: firebase.database.ServerValue.TIMESTAMP
                     });
 
-                    console.log("✅ Firebase Save Successful!");
                     vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: "Registration Success. Terminating call." });
                 } catch (error) {
-                    console.error("❌ Firebase Registration Error:", error.message);
-                    vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: `Registration failed due to database error: ${error.message}. Ask them to try again.` });
+                    console.error("Registration Error:", error);
+                    vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: "Registration failed. Ask them to verify their details." });
                 }
             };
 
@@ -291,7 +266,6 @@
                     const user = userCredential.user;
 
                     await db.ref('workers/' + user.uid).set({
-                        language: signupData.language,
                         name: signupData.name,
                         phone: signupData.phone,
                         address: signupData.address,
@@ -387,6 +361,7 @@
                             {/* Header */}
                             <header className="absolute top-0 w-full p-6 flex justify-between items-center z-50">
                                 <h1 className="text-2xl font-extrabold tracking-widest text-white">VELA <span className="text-blue-500 font-normal">| Voice</span></h1>
+                                {/* Updated Button Text to 'Cancel' */}
                                 <button onClick={stopVoiceCall} className="bg-white/10 hover:bg-white/20 text-white backdrop-blur-md px-6 py-2 rounded-full text-xs font-bold tracking-widest uppercase transition-all border border-white/10">Cancel</button>
                             </header>
 
@@ -404,13 +379,13 @@
                             {/* Subtitle Transcript */}
                             <div className="z-10 w-full max-w-3xl px-6 flex flex-col items-center justify-center h-48">
                                 <p className="text-blue-500/70 font-mono text-xs tracking-[0.2em] uppercase mb-6">
-                                    {callStatus === 'loading' ? 'Establishing secure uplink...' : voiceMode === 'login' ? 'Authentication Active' : 'Registration Active'}
+                                    {callStatus === 'loading' ? 'Establishing secure uplink...' : voiceMode === 'login' ? 'Grok Authentication Active' : 'Grok Registration Active'}
                                 </p>
                                 
                                 <div className="space-y-4 w-full text-center">
                                     {messages.slice(-2).map((msg, idx) => (
                                         <p key={idx} className={`text-xl md:text-2xl font-light transition-opacity duration-500 ${msg.role === 'user' ? 'text-white' : 'text-cyan-300'} ${idx === messages.slice(-2).length - 1 ? 'opacity-100' : 'opacity-40'}`}>
-                                            <span className="font-bold opacity-50 mr-2 text-sm uppercase tracking-wider">{msg.role === 'user' ? 'You' : 'Assistant'}</span> 
+                                            <span className="font-bold opacity-50 mr-2 text-sm uppercase tracking-wider">{msg.role === 'user' ? 'You' : 'Grok'}</span> 
                                             {msg.text}
                                         </p>
                                     ))}
@@ -454,16 +429,6 @@
                             ) : (
                                 <div className="animate-fade-in">
                                     <form onSubmit={handleSignup} className="space-y-3">
-                                        
-                                        <div>
-                                            <label className="block text-xs font-bold text-gray-500 mb-1">Preferred Language</label>
-                                            <select required value={signupData.language} onChange={(e) => setSignupData({...signupData, language: e.target.value})} className="w-full border border-gray-300 rounded-lg p-3 bg-white outline-none">
-                                                <option value="English">English</option>
-                                                <option value="Hindi">Hindi</option>
-                                                <option value="Regional">Regional</option>
-                                            </select>
-                                        </div>
-
                                         <div className="grid grid-cols-2 gap-3">
                                             <div>
                                                 <label className="block text-xs font-bold text-gray-500 mb-1">12-Digit Aadhar</label>
@@ -539,7 +504,7 @@
                             <div className="text-white">
                                 <p className="text-sm text-green-200 uppercase tracking-wider font-bold">Logged in as</p>
                                 <h2 className="text-2xl font-semibold">{workerProfile.name}</h2>
-                                <p className="font-bold text-green-100 mt-1">Trade: <span className="bg-green-800 px-2 py-1 rounded text-xs ml-1">{workerProfile.job}</span> | Lang: <span className="text-sm font-normal">{workerProfile.language || 'English'}</span></p>
+                                <p className="font-bold text-green-100 mt-1">Trade: <span className="bg-green-800 px-2 py-1 rounded text-xs ml-1">{workerProfile.job}</span></p>
                             </div>
                         </div>
                     </div>
