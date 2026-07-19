@@ -20,6 +20,12 @@
         @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .7; transform: scale(1.1); } }
         .custom-scrollbar::-webkit-scrollbar { display: none; }
         .custom-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        @keyframes slowPulse {
+            0%, 100% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.05); opacity: 1; }
+        }
+        .orb-core { animation: slowPulse 3s ease-in-out infinite; }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 font-sans">
@@ -28,6 +34,7 @@
     <script type="text/babel" data-type="module">
         const { useState, useEffect, useRef } = React;
 
+        // 🔑 1. FIREBASE CONFIGURATION
         const firebaseConfig = {
             apiKey: "AIzaSyACjDUvLGLETIWevuzutrzngzc_2TO6yd8",
             authDomain: "vela-cc8a5.firebaseapp.com",
@@ -48,7 +55,7 @@
         function App() {
             const [currentUser, setCurrentUser] = useState(null);
             const [isLoading, setIsLoading] = useState(true);
-            const [authView, setAuthView] = useState('login'); // login, signup, voice_auth
+            const [authView, setAuthView] = useState('login'); 
             const [homeTab, setHomeTab] = useState('available_jobs'); 
 
             const [workerProfile, setWorkerProfile] = useState({});
@@ -59,7 +66,7 @@
             const [aadharLogin, setAadharLogin] = useState('');
             const [password, setPassword] = useState('');
             const [signupData, setSignupData] = useState({ 
-                name: '', phone: '', address: '', aadhar: '', job: 'Plumber', experience: '0-1 Years' 
+                language: 'English', name: '', phone: '', address: '', aadhar: '', job: 'Plumber', experience: '0-1 Years' 
             });
 
             // ⚡ VAPI / GROK STATES
@@ -67,17 +74,16 @@
             const [callStatus, setCallStatus] = useState('inactive'); 
             const [volumeLevel, setVolumeLevel] = useState(0);
             const [messages, setMessages] = useState([]);
+            const [voiceMode, setVoiceMode] = useState('login');
             const chatEndRef = useRef(null);
 
-            // Auto-scroll chat
             useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-            // --- 1. INITIALIZE VAPI ---
+            // --- 2. INITIALIZE VAPI & LISTENERS ---
             useEffect(() => {
                 import('https://esm.sh/@vapi-ai/web').then(({ default: Vapi }) => {
                     
-                    // ⚠️ PASTE YOUR VAPI PUBLIC KEY HERE
-                    const vapiInstance = new Vapi("PASTE_YOUR_VAPI_PUBLIC_KEY_HERE");
+                    const vapiInstance = new Vapi("f8748ad2-c541-46a6-8f99-ce26566880e9");
                     
                     vapiInstance.on('call-start', () => setCallStatus('active'));
                     vapiInstance.on('call-end', () => setCallStatus('inactive'));
@@ -88,13 +94,34 @@
                             setMessages(prev => [...prev, { role: msg.role, text: msg.transcript }]);
                         }
                         
-                        // ⚡ INTERCEPT AI FUNCTION CALLS
-                        if (msg.type === 'tool-calls') {
-                            const toolCall = msg.toolCalls[0];
-                            if (toolCall.function.name === 'login_worker') {
-                                handleVoiceLogin(toolCall.function.arguments, toolCall.id, vapiInstance);
-                            } else if (toolCall.function.name === 'register_worker') {
-                                handleVoiceRegistration(toolCall.function.arguments, toolCall.id, vapiInstance);
+                        // 🔥 BULLETPROOF TOOL CATCHER (Catches both old & new Vapi formats)
+                        if (msg.type === 'tool-calls' || msg.type === 'function-call') {
+                            console.log("🚨 VAPI TOOL TRIGGERED:", msg); 
+                            
+                            let funcName = '';
+                            let extractedData = {};
+                            let callId = '';
+
+                            if (msg.type === 'tool-calls') {
+                                const toolCall = msg.toolCalls[0];
+                                funcName = toolCall.function.name;
+                                callId = toolCall.id;
+                                extractedData = toolCall.function.arguments;
+                                if (typeof extractedData === 'string') {
+                                    extractedData = JSON.parse(extractedData);
+                                }
+                            } else if (msg.type === 'function-call') {
+                                funcName = msg.functionCall.name;
+                                extractedData = msg.functionCall.parameters;
+                                callId = msg.id || 'mock-id';
+                            }
+
+                            console.log(`📤 Data prepared for ${funcName}:`, extractedData);
+
+                            if (funcName === 'login_worker') {
+                                handleVoiceLogin(extractedData, callId, vapiInstance);
+                            } else if (funcName === 'register_worker') {
+                                handleVoiceRegistration(extractedData, callId, vapiInstance);
                             }
                         }
                     });
@@ -103,12 +130,11 @@
                 });
             }, []);
 
-            // --- 2. FIREBASE REALTIME DATA LISTENER ---
+            // --- 3. FIREBASE AUTO-LOGIN LISTENER ---
             useEffect(() => {
                 const unsubscribe = auth.onAuthStateChanged((user) => {
                     if (user) {
                         setCurrentUser(user);
-                        // If voice call is active when logged in successfully, kill it
                         if (vapi) vapi.stop(); 
                         setCallStatus('inactive');
                         
@@ -173,127 +199,82 @@
                 return () => unsubscribe();
             }, [vapi]);
 
-            // --- 3. VOICE LOGIN & REGISTRATION LOGIC ---
+            // --- 4. VOICE AUTH LOGIC ---
             const startVoiceAuth = async (type) => {
+                setVoiceMode(type);
                 setAuthView('voice_auth');
                 setCallStatus('loading');
                 setMessages([]);
                 
-                let assistantConfig = {
-                    name: type === 'login' ? "Grok Login" : "Grok Registration",
-                    silenceTimeoutSeconds: 120, 
-                    maxDurationSeconds: 1800,
-                    transcriber: { provider: "deepgram", model: "nova-2", language: "en-IN" },
-                    voice: { provider: "11labs", voiceId: "burt" },
-                    model: {
-                        provider: "openai",
-                        model: "gpt-4-turbo",
-                        messages: [],
-                        tools: []
-                    }
-                };
-
+                // ⚠️ PASTE YOUR VAPI ASSISTANT IDs HERE
                 if (type === 'login') {
-                    assistantConfig.firstMessage = "Grok Voice Login activated. Please slowly say your 12 digit Aadhar number.";
-                    assistantConfig.model.messages.push({
-                        role: "system",
-                        content: `You are Grok, handling worker login. Collect their 12-digit Aadhar number first. Then collect their password. Wait patiently. Once you have both, immediately trigger the 'login_worker' tool.`
-                    });
-                    assistantConfig.model.tools.push({
-                        type: "function",
-                        function: {
-                            name: "login_worker",
-                            description: "Log the worker in. Trigger only after collecting Aadhar and Password.",
-                            parameters: {
-                                type: "object",
-                                properties: {
-                                    aadhar: { type: "string" },
-                                    password: { type: "string" }
-                                },
-                                required: ["aadhar", "password"]
-                            }
-                        }
-                    });
+                    await vapi.start("e486b32a-56fb-4b3c-a0d0-8d9111c99264");
                 } else {
-                    assistantConfig.firstMessage = "Grok Voice Registration activated. I need to collect a few details to create your account. Let's start with your 12-digit Aadhar number.";
-                    assistantConfig.model.messages.push({
-                        role: "system",
-                        content: `You are Grok, an onboarding AI. Collect these 5 things ONE AT A TIME: 1. Aadhar Number (12 digits) 2. A secure password 3. Full Name 4. Home Address 5. Phone Number 6. Job/Trade (e.g. Plumber). Wait patiently for answers. Once you have all 6 pieces of information, immediately trigger the 'register_worker' tool.`
-                    });
-                    assistantConfig.model.tools.push({
-                        type: "function",
-                        function: {
-                            name: "register_worker",
-                            description: "Register the worker. Trigger only after collecting all 6 fields.",
-                            parameters: {
-                                type: "object",
-                                properties: {
-                                    aadhar: { type: "string" },
-                                    password: { type: "string" },
-                                    name: { type: "string" },
-                                    phone: { type: "string" },
-                                    address: { type: "string" },
-                                    job: { type: "string" }
-                                },
-                                required: ["aadhar", "password", "name", "phone", "address", "job"]
-                            }
-                        }
-                    });
+                    await vapi.start("0239d0f2-354f-4ce7-b8c9-369e6bc17634");
                 }
-
-                await vapi.start(assistantConfig);
             };
 
             const handleVoiceLogin = async (data, toolCallId, vapiInstance) => {
-                const cleanAadhar = data.aadhar.replace(/\D/g, '');
-                const cleanPass = data.password.replace(/\s/g, '').toLowerCase().replace(/\./g, '');
+                const cleanAadhar = data.aadhar ? data.aadhar.replace(/\D/g, '') : '';
+                const cleanPass = data.password ? data.password.replace(/\s/g, '').toLowerCase() : '';
                 
+                console.log(`🔐 Attempting Voice Login with Aadhar: ${cleanAadhar}`);
+
                 try {
                     const mappedEmail = `${cleanAadhar}@worker.vela.com`;
                     await auth.signInWithEmailAndPassword(mappedEmail, cleanPass);
-                    // If successful, the auth listener will trigger and redirect the user automatically
+                    vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: "Login Success. Terminating call." });
                 } catch (error) {
-                    vapiInstance.send({
-                        type: 'tool-return', toolCallId: toolCallId,
-                        result: `Login failed. Tell the user the credentials were incorrect. Heard Aadhar: ${cleanAadhar}, Password: ${cleanPass}. Ask them to try again.`
-                    });
+                    console.error("❌ Firebase Login Error:", error.message);
+                    vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: "Login failed. Ask them to verify their Aadhar and password." });
                 }
             };
 
             const handleVoiceRegistration = async (data, toolCallId, vapiInstance) => {
-                const cleanAadhar = data.aadhar.replace(/\D/g, '');
-                const cleanPass = data.password.replace(/\s/g, '').toLowerCase().replace(/\./g, '');
+                const cleanAadhar = data.aadhar ? data.aadhar.replace(/\D/g, '') : '';
+                const cleanPass = data.password ? data.password.replace(/\s/g, '').toLowerCase() : '';
                 
+                console.log(`📝 Attempting Voice Registration for: ${data.name}`);
+
+                // FIREBASE REQUIRES 6+ CHARACTERS FOR PASSWORD
+                if (cleanPass.length < 6) {
+                    console.warn("⚠️ Password too short! Telling AI to ask for a longer one.");
+                    vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: "Registration failed: Password must be at least 6 characters. Ask the user for a new, longer password." });
+                    return;
+                }
+
                 try {
                     const mappedEmail = `${cleanAadhar}@worker.vela.com`;
                     const userCredential = await auth.createUserWithEmailAndPassword(mappedEmail, cleanPass);
                     const user = userCredential.user;
 
+                    // Immediately save to Firebase!
                     await db.ref('workers/' + user.uid).set({
-                        name: data.name,
-                        phone: data.phone,
-                        address: data.address,
-                        job: data.job,
-                        experience: '0-1 Years', // Default for voice
+                        language: data.language || 'English',
+                        name: data.name || 'Unknown',
+                        phone: data.phone || 'Unknown',
+                        address: data.address || 'Unknown',
+                        job: data.job || 'Unknown',
+                        experience: '0-1 Years', 
                         aadhar: cleanAadhar,
                         createdAt: firebase.database.ServerValue.TIMESTAMP
                     });
-                    // Auth listener will handle the redirect
+
+                    console.log("✅ Firebase Save Successful!");
+                    vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: "Registration Success. Terminating call." });
                 } catch (error) {
-                    vapiInstance.send({
-                        type: 'tool-return', toolCallId: toolCallId,
-                        result: "Registration failed, possibly due to a weak password or existing account. Ask them to try again."
-                    });
+                    console.error("❌ Firebase Registration Error:", error.message);
+                    vapiInstance.send({ type: 'tool-return', toolCallId: toolCallId, result: `Registration failed due to database error: ${error.message}. Ask them to try again.` });
                 }
             };
 
             const stopVoiceCall = () => {
-                vapi.stop();
+                if (vapi) vapi.stop();
                 setCallStatus('inactive');
                 setAuthView('login');
             };
 
-            // --- 4. MANUAL AUTHENTICATION LOGIC ---
+            // --- 5. MANUAL AUTH LOGIC ---
             const switchAuthView = (view) => {
                 setAuthView(view);
                 setAadharLogin('');
@@ -310,6 +291,7 @@
                     const user = userCredential.user;
 
                     await db.ref('workers/' + user.uid).set({
+                        language: signupData.language,
                         name: signupData.name,
                         phone: signupData.phone,
                         address: signupData.address,
@@ -341,7 +323,7 @@
                 auth.signOut();
             };
 
-            // --- 5. DASHBOARD LOGIC ---
+            // --- 6. DASHBOARD LOGIC ---
             const acceptJob = async (reqId) => {
                 try {
                     await db.ref('requests/' + reqId).update({
@@ -394,39 +376,45 @@
             // --- PRE-LOGIN AUTHENTICATION SCREENS ---
             if (!currentUser) {
                 
-                // GROK VOICE FULLSCREEN UI
+                // 🌌 REDESIGNED GROK VOICE FULLSCREEN UI
                 if (authView === 'voice_auth') {
                     return (
-                        <div className="min-h-screen bg-black flex flex-col max-w-3xl mx-auto p-6 h-screen max-h-screen">
-                            <header className="py-6 border-b border-gray-900 mb-4 flex justify-between items-center shrink-0">
-                                <h1 className="text-2xl font-extrabold tracking-widest text-white">VELA <span className="text-gray-600 font-normal">| Voice</span></h1>
-                                <button onClick={stopVoiceCall} className="text-xs bg-gray-900 text-gray-400 hover:text-white px-3 py-1 rounded-full border border-gray-800 transition">Cancel</button>
+                        <div className="min-h-screen bg-[#020617] relative flex flex-col items-center justify-center overflow-hidden font-sans">
+                            
+                            {/* Background Glow */}
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-blue-900/10 rounded-full blur-[120px] pointer-events-none"></div>
+                            
+                            {/* Header */}
+                            <header className="absolute top-0 w-full p-6 flex justify-between items-center z-50">
+                                <h1 className="text-2xl font-extrabold tracking-widest text-white">VELA <span className="text-blue-500 font-normal">| Voice</span></h1>
+                                <button onClick={stopVoiceCall} className="bg-white/10 hover:bg-white/20 text-white backdrop-blur-md px-6 py-2 rounded-full text-xs font-bold tracking-widest uppercase transition-all border border-white/10">Cancel</button>
                             </header>
 
-                            <div className="flex-1 overflow-y-auto mb-4 space-y-4 px-4 custom-scrollbar flex flex-col">
-                                {messages.map((msg, idx) => (
-                                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                        <div className={`max-w-[80%] rounded-2xl px-5 py-3 ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-900 text-gray-200 border border-gray-800'}`}>
-                                            <p className="text-sm">{msg.text}</p>
-                                        </div>
-                                    </div>
-                                ))}
-                                <div ref={chatEndRef} />
+                            {/* Center Holographic Orb */}
+                            <div className="relative flex items-center justify-center w-64 h-64 mb-16">
+                                <div className="absolute inset-0 border-[1px] border-blue-500/20 rounded-full"></div>
+                                <div className="absolute inset-0 bg-blue-500/20 rounded-full transition-transform duration-75 ease-out" style={{ transform: `scale(${1 + volumeLevel * 1.8})` }}></div>
+                                <div className="absolute inset-0 bg-cyan-400/10 border border-cyan-400/30 rounded-full transition-transform duration-100 ease-out" style={{ transform: `scale(${1 + volumeLevel * 1.3})` }}></div>
+                                
+                                <div className={`orb-core w-28 h-28 bg-gradient-to-tr from-blue-700 to-cyan-400 rounded-full shadow-[0_0_60px_rgba(6,182,212,0.6)] flex items-center justify-center z-10`}>
+                                    <span className="text-4xl text-white opacity-90">{callStatus === 'loading' ? '⏳' : '🎙️'}</span>
+                                </div>
                             </div>
 
-                            <div className="shrink-0 flex flex-col items-center justify-center py-6 border-t border-gray-900">
-                                <button 
-                                    className={`relative flex items-center justify-center w-24 h-24 rounded-full transition-all duration-300
-                                        ${callStatus === 'active' ? 'bg-blue-600 shadow-[0_0_40px_rgba(37,99,235,0.6)] grok-pulse' : 'bg-gray-800'}`}
-                                >
-                                    <span className="text-4xl">🎤</span>
-                                    {callStatus === 'active' && (
-                                        <div className="absolute inset-0 bg-blue-500 rounded-full opacity-30" style={{ transform: `scale(${1 + volumeLevel * 1.5})`, transition: 'transform 0.1s ease-out' }}></div>
-                                    )}
-                                </button>
-                                <p className="mt-6 text-sm font-mono text-gray-500 uppercase tracking-widest">
-                                    {callStatus === 'loading' ? 'Connecting to Grok...' : 'Grok is listening...'}
+                            {/* Subtitle Transcript */}
+                            <div className="z-10 w-full max-w-3xl px-6 flex flex-col items-center justify-center h-48">
+                                <p className="text-blue-500/70 font-mono text-xs tracking-[0.2em] uppercase mb-6">
+                                    {callStatus === 'loading' ? 'Establishing secure uplink...' : voiceMode === 'login' ? 'Authentication Active' : 'Registration Active'}
                                 </p>
+                                
+                                <div className="space-y-4 w-full text-center">
+                                    {messages.slice(-2).map((msg, idx) => (
+                                        <p key={idx} className={`text-xl md:text-2xl font-light transition-opacity duration-500 ${msg.role === 'user' ? 'text-white' : 'text-cyan-300'} ${idx === messages.slice(-2).length - 1 ? 'opacity-100' : 'opacity-40'}`}>
+                                            <span className="font-bold opacity-50 mr-2 text-sm uppercase tracking-wider">{msg.role === 'user' ? 'You' : 'Assistant'}</span> 
+                                            {msg.text}
+                                        </p>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     );
@@ -454,8 +442,8 @@
                                     </form>
 
                                     <div className="mt-6 border-t border-gray-200 pt-6">
-                                        <button onClick={() => startVoiceAuth('login')} disabled={!vapi} className="w-full bg-black hover:bg-gray-900 text-white p-3 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg transition transform hover:scale-[1.02] disabled:opacity-50">
-                                            <span className="text-xl">✨</span> Grok Voice Login
+                                        <button onClick={() => startVoiceAuth('login')} disabled={!vapi} className="w-full bg-[#020617] hover:bg-gray-900 text-white p-3 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg transition transform hover:scale-[1.02] disabled:opacity-50">
+                                            <span className="text-xl">✨</span> Voice Login
                                         </button>
                                     </div>
 
@@ -466,6 +454,16 @@
                             ) : (
                                 <div className="animate-fade-in">
                                     <form onSubmit={handleSignup} className="space-y-3">
+                                        
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 mb-1">Preferred Language</label>
+                                            <select required value={signupData.language} onChange={(e) => setSignupData({...signupData, language: e.target.value})} className="w-full border border-gray-300 rounded-lg p-3 bg-white outline-none">
+                                                <option value="English">English</option>
+                                                <option value="Hindi">Hindi</option>
+                                                <option value="Regional">Regional</option>
+                                            </select>
+                                        </div>
+
                                         <div className="grid grid-cols-2 gap-3">
                                             <div>
                                                 <label className="block text-xs font-bold text-gray-500 mb-1">12-Digit Aadhar</label>
@@ -510,7 +508,7 @@
                                     </form>
 
                                     <div className="mt-4 pt-4 border-t border-gray-200">
-                                        <button onClick={() => startVoiceAuth('signup')} disabled={!vapi} className="w-full bg-black hover:bg-gray-900 text-white p-3 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg transition transform hover:scale-[1.02] disabled:opacity-50">
+                                        <button onClick={() => startVoiceAuth('signup')} disabled={!vapi} className="w-full bg-[#020617] hover:bg-gray-900 text-white p-3 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg transition transform hover:scale-[1.02] disabled:opacity-50">
                                             <span className="text-xl">✨</span> Register via Voice
                                         </button>
                                     </div>
@@ -541,7 +539,7 @@
                             <div className="text-white">
                                 <p className="text-sm text-green-200 uppercase tracking-wider font-bold">Logged in as</p>
                                 <h2 className="text-2xl font-semibold">{workerProfile.name}</h2>
-                                <p className="font-bold text-green-100 mt-1">Trade: <span className="bg-green-800 px-2 py-1 rounded text-xs ml-1">{workerProfile.job}</span></p>
+                                <p className="font-bold text-green-100 mt-1">Trade: <span className="bg-green-800 px-2 py-1 rounded text-xs ml-1">{workerProfile.job}</span> | Lang: <span className="text-sm font-normal">{workerProfile.language || 'English'}</span></p>
                             </div>
                         </div>
                     </div>
