@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VELA - Grok Voice Onboarding</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- FIREBASE REALTIME DATABASE SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+    
+    <style>
+        .grok-pulse { animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .7; transform: scale(1.1); } }
+        /* Custom scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { display: none; }
+        .custom-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-black text-gray-200 font-sans min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        const { useState, useEffect, useRef } = React;
+
+        // 🔑 1. FIREBASE CONFIGURATION
+        const firebaseConfig = {
+            apiKey: "AIzaSyACjDUvLGLETIWevuzutrzngzc_2TO6yd8",
+            authDomain: "vela-cc8a5.firebaseapp.com",
+            databaseURL: "https://vela-cc8a5-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "vela-cc8a5",
+            storageBucket: "vela-cc8a5.firebasestorage.app",
+            messagingSenderId: "603919577853",
+            appId: "1:603919577853:web:0ce24d0e14d9767eb18494",
+            measurementId: "G-ZJKWN8QR8B"
+        };
+
+
+        if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
+        const db = firebase.database(); 
+
+        function App() {
+            const [vapi, setVapi] = useState(null);
+            const [callStatus, setCallStatus] = useState('inactive'); 
+            const [volumeLevel, setVolumeLevel] = useState(0);
+            const [messages, setMessages] = useState([]);
+            const [workerData, setWorkerData] = useState(null);
+            
+            const chatEndRef = useRef(null);
+
+            // Auto-scroll logic for chat
+            useEffect(() => {
+                chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            }, [messages]);
+
+            // 🔑 2. VAPI INITIALIZATION 
+            useEffect(() => {
+                import('https://esm.sh/@vapi-ai/web').then(({ default: Vapi }) => {
+                    
+                    // PASTE VAPI PUBLIC KEY HERE
+                    const vapiInstance = new Vapi("f8748ad2-c541-46a6-8f99-ce26566880e9");
+                    
+                    vapiInstance.on('call-start', () => setCallStatus('active'));
+                    vapiInstance.on('call-end', () => setCallStatus(prev => prev === 'success' ? 'success' : 'inactive'));
+                    vapiInstance.on('volume-level', (vol) => setVolumeLevel(vol));
+                    
+                    // 💬 THIS IS THE LISTENER THAT CAPTURES THE CHAT
+                    vapiInstance.on('message', (msg) => {
+                        if (msg.type === 'transcript' && msg.transcriptType === 'final') {
+                            setMessages(prev => [...prev, { role: msg.role, text: msg.transcript }]);
+                        }
+                        
+                        // Captures data when AI triggers 'submit_worker_profile' tool
+                        if (msg.type === 'tool-calls') {
+                            const toolCall = msg.toolCalls[0];
+                            if (toolCall.function.name === 'submit_worker_profile') {
+                                handleDatabaseSave(toolCall.function.arguments, toolCall.id, vapiInstance);
+                            }
+                        }
+                    });
+
+                    setVapi(vapiInstance);
+                });
+            }, []);
+
+            // 🔑 3. START DASHBOARD ASSISTANT
+            const startCall = async () => {
+                setCallStatus('loading');
+                setMessages([]);
+                
+                // PASTE YOUR ASSISTANT ID HERE
+                await vapi.start("0239d0f2-354f-4ce7-b8c9-369e6bc17634"); 
+            };
+
+            const stopCall = () => {
+                vapi.stop();
+                setCallStatus('inactive');
+            };
+
+            // 💾 4. FIREBASE SAVE LOGIC
+            const handleDatabaseSave = async (data, toolCallId, vapiInstance) => {
+                try {
+                    const newWorkerRef = db.ref('workers').push();
+                    await newWorkerRef.set({
+                        ...data,
+                        status: 'Active',
+                        onboardedVia: 'Vapi_Voice',
+                        createdAt: firebase.database.ServerValue.TIMESTAMP
+                    });
+
+                    setWorkerData(data);
+                    setCallStatus('success');
+
+                    vapiInstance.send({
+                        type: 'tool-return',
+                        toolCallId: toolCallId,
+                        result: "Save successful. Say goodbye."
+                    });
+
+                    setTimeout(() => vapiInstance.stop(), 5000);
+                    
+                } catch (err) {
+                    console.error("Firebase Error:", err);
+                    vapiInstance.send({
+                        type: 'tool-return',
+                        toolCallId: toolCallId,
+                        result: "Save failed. Ask them to repeat."
+                    });
+                }
+            };
+
+            // 🖥️ 5. SUCCESS SCREEN
+            if (callStatus === 'success' && workerData) {
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
+                        <div className="w-32 h-32 bg-green-500 rounded-full flex items-center justify-center mb-8 shadow-[0_0_50px_rgba(34,197,94,0.5)]">
+                            <span className="text-6xl">✓</span>
+                        </div>
+                        <h1 className="text-4xl font-extrabold mb-2 text-white">Profile Created!</h1>
+                        <p className="text-gray-400 mb-8 text-lg">Grok successfully registered you in the system.</p>
+                        
+                        <div className="bg-gray-900 border border-gray-800 p-8 rounded-2xl w-full max-w-md text-left shadow-2xl">
+                            <p className="text-xs font-bold text-gray-500 uppercase tracking-widest border-b border-gray-800 pb-2 mb-4">Extracted Data</p>
+                            <p className="mb-2"><span className="text-gray-400">Name:</span> <span className="text-white font-semibold ml-2">{workerData.name}</span></p>
+                            <p className="mb-2"><span className="text-gray-400">Trade:</span> <span className="text-blue-400 font-mono ml-2">{workerData.job}</span></p>
+                            <p className="mb-2"><span className="text-gray-400">Phone:</span> <span className="text-white font-mono ml-2">{workerData.phone}</span></p>
+                            <p><span className="text-gray-400">Address:</span> <span className="text-white ml-2">{workerData.address}</span></p>
+                        </div>
+                        
+                        <button onClick={() => window.location.reload()} className="mt-8 px-8 py-3 bg-white text-black font-bold rounded-full hover:bg-gray-200 transition">
+                            Go to Login Dashboard
+                        </button>
+                    </div>
+                );
+            }
+
+            // 🎙️ 6. MAIN CHAT SCREEN
+            return (
+                <div className="min-h-screen flex flex-col max-w-3xl mx-auto p-6 h-screen max-h-screen">
+                    <header className="py-6 border-b border-gray-900 mb-4 flex justify-between items-center shrink-0">
+                        <h1 className="text-2xl font-extrabold tracking-widest text-white">VELA <span className="text-gray-600 font-normal">| Voice</span></h1>
+                        <span className="text-xs bg-gray-900 text-gray-400 px-3 py-1 rounded-full border border-gray-800 font-mono tracking-widest hidden sm:inline-block">Powered by Grok & Vapi</span>
+                    </header>
+
+                    {/* Chat Bubble Container */}
+                    <div className="flex-1 overflow-y-auto mb-4 space-y-4 px-4 custom-scrollbar flex flex-col">
+                        {messages.length === 0 && callStatus !== 'active' && (
+                            <div className="text-center text-gray-600 mt-20">
+                                <p className="text-4xl mb-4">🎙️</p>
+                                <p className="text-lg">Tap the orb below to begin onboarding.</p>
+                            </div>
+                        )}
+                        
+                        {messages.map((msg, idx) => (
+                            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`max-w-[80%] rounded-2xl px-5 py-3 ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-900 text-gray-200 border border-gray-800'}`}>
+                                    <p className="text-sm">{msg.text}</p>
+                                </div>
+                            </div>
+                        ))}
+                        {/* Auto-scroll anchor */}
+                        <div ref={chatEndRef} />
+                    </div>
+
+                    {/* Orb & Microphone Container */}
+                    <div className="shrink-0 flex flex-col items-center justify-center py-6 border-t border-gray-900">
+                        <button 
+                            disabled={callStatus === 'loading' || !vapi}
+                            onClick={callStatus === 'active' ? stopCall : startCall}
+                            className={`relative flex items-center justify-center w-24 h-24 rounded-full transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed
+                                ${callStatus === 'active' ? 'bg-blue-600 shadow-[0_0_40px_rgba(37,99,235,0.6)] grok-pulse' : 'bg-gray-800 hover:bg-gray-700 shadow-xl'}`}
+                        >
+                            <span className="text-4xl">{callStatus === 'active' ? '⬛' : '🎤'}</span>
+                            
+                            {callStatus === 'active' && (
+                                <div 
+                                    className="absolute inset-0 bg-blue-500 rounded-full opacity-30" 
+                                    style={{ transform: `scale(${1 + volumeLevel * 1.5})`, transition: 'transform 0.1s ease-out' }}
+                                ></div>
+                            )}
+                        </button>
+                        <p className="mt-6 text-sm font-mono text-gray-500 uppercase tracking-widest">
+                            {callStatus === 'inactive' ? 'System Offline' : callStatus === 'loading' ? 'Connecting to Grok...' : 'Grok is listening...'}
+                        </p>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

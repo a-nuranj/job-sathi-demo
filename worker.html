@@ -10,15 +10,23 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+    <!-- FIREBASE REALTIME DATABASE SDKs -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+    
+    <style>
+        .grok-pulse { animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .7; transform: scale(1.1); } }
+        .custom-scrollbar::-webkit-scrollbar { display: none; }
+        .custom-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
 </head>
 <body class="bg-gray-50 text-gray-800 font-sans">
     <div id="root"></div>
 
-    <script type="text/babel">
-        const { useState, useEffect } = React;
+    <script type="text/babel" data-type="module">
+        const { useState, useEffect, useRef } = React;
 
         const firebaseConfig = {
             apiKey: "AIzaSyACjDUvLGLETIWevuzutrzngzc_2TO6yd8",
@@ -40,13 +48,12 @@
         function App() {
             const [currentUser, setCurrentUser] = useState(null);
             const [isLoading, setIsLoading] = useState(true);
-            const [authView, setAuthView] = useState('login'); 
+            const [authView, setAuthView] = useState('login'); // login, signup, voice_auth
             const [homeTab, setHomeTab] = useState('available_jobs'); 
 
             const [workerProfile, setWorkerProfile] = useState({});
             const [availableRequests, setAvailableRequests] = useState([]);
             const [myAcceptedJobs, setMyAcceptedJobs] = useState([]);
-            
             const [completionForms, setCompletionForms] = useState({});
 
             const [aadharLogin, setAadharLogin] = useState('');
@@ -55,32 +62,94 @@
                 name: '', phone: '', address: '', aadhar: '', job: 'Plumber', experience: '0-1 Years' 
             });
 
+            // ⚡ VAPI / GROK STATES
+            const [vapi, setVapi] = useState(null);
+            const [callStatus, setCallStatus] = useState('inactive'); 
+            const [volumeLevel, setVolumeLevel] = useState(0);
+            const [messages, setMessages] = useState([]);
+            const chatEndRef = useRef(null);
+
+            // Auto-scroll chat
+            useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+            // --- 1. INITIALIZE VAPI ---
+            useEffect(() => {
+                import('https://esm.sh/@vapi-ai/web').then(({ default: Vapi }) => {
+                    
+                    // ⚠️ PASTE YOUR VAPI PUBLIC KEY HERE
+                    const vapiInstance = new Vapi("PASTE_YOUR_VAPI_PUBLIC_KEY_HERE");
+                    
+                    vapiInstance.on('call-start', () => setCallStatus('active'));
+                    vapiInstance.on('call-end', () => setCallStatus('inactive'));
+                    vapiInstance.on('volume-level', (vol) => setVolumeLevel(vol));
+                    
+                    vapiInstance.on('message', (msg) => {
+                        if (msg.type === 'transcript' && msg.transcriptType === 'final') {
+                            setMessages(prev => [...prev, { role: msg.role, text: msg.transcript }]);
+                        }
+                        
+                        // ⚡ INTERCEPT AI FUNCTION CALLS
+                        if (msg.type === 'tool-calls') {
+                            const toolCall = msg.toolCalls[0];
+                            if (toolCall.function.name === 'login_worker') {
+                                handleVoiceLogin(toolCall.function.arguments, toolCall.id, vapiInstance);
+                            } else if (toolCall.function.name === 'register_worker') {
+                                handleVoiceRegistration(toolCall.function.arguments, toolCall.id, vapiInstance);
+                            }
+                        }
+                    });
+
+                    setVapi(vapiInstance);
+                });
+            }, []);
+
+            // --- 2. FIREBASE REALTIME DATA LISTENER ---
             useEffect(() => {
                 const unsubscribe = auth.onAuthStateChanged((user) => {
                     if (user) {
                         setCurrentUser(user);
+                        // If voice call is active when logged in successfully, kill it
+                        if (vapi) vapi.stop(); 
+                        setCallStatus('inactive');
                         
                         db.ref('workers/' + user.uid).once('value').then((snapshot) => {
                             if (snapshot.exists()) {
                                 const profile = snapshot.val();
                                 setWorkerProfile(profile);
                                 
-                                db.ref('requests').on('value', (reqSnapshot) => {
+                                db.ref('requests').on('value', async (reqSnapshot) => {
                                     const available = [];
                                     const accepted = [];
+                                    const reqPromises = [];
                                     
                                     reqSnapshot.forEach((child) => {
                                         const req = { id: child.key, ...child.val() };
-                                        
-                                        const requestedService = (req.service || "").trim().toLowerCase();
+                                        reqPromises.push(
+                                            (async () => {
+                                                if (req.userId) {
+                                                    const custSnap = await db.ref('users/' + req.userId).once('value');
+                                                    if (custSnap.exists()) {
+                                                        const custData = custSnap.val();
+                                                        req.customerName = custData.name;
+                                                        req.customerPhone = custData.phone;
+                                                        req.customerRegisteredAddress = custData.address;
+                                                    }
+                                                }
+                                                return req;
+                                            })()
+                                        );
+                                    });
+
+                                    const requestsWithCustomerData = await Promise.all(reqPromises);
+
+                                    requestsWithCustomerData.forEach((req) => {
+                                        const requestedService = (req.type || req.service || "").trim().toLowerCase();
                                         const workerTrade = (profile.job || "").trim().toLowerCase();
-                                        
                                         const hasDeclined = req.declinedBy && req.declinedBy[user.uid] === true;
                                         
-                                        if (requestedService === workerTrade && (req.status || "").includes('Pending Worker') && !hasDeclined) {
+                                        if (requestedService === workerTrade && (req.status || "").includes('Searching') && !hasDeclined) {
                                             available.push(req);
                                         }
-                                        
                                         if (req.workerId === user.uid) {
                                             accepted.push(req);
                                         }
@@ -102,8 +171,129 @@
                     }
                 });
                 return () => unsubscribe();
-            }, []);
+            }, [vapi]);
 
+            // --- 3. VOICE LOGIN & REGISTRATION LOGIC ---
+            const startVoiceAuth = async (type) => {
+                setAuthView('voice_auth');
+                setCallStatus('loading');
+                setMessages([]);
+                
+                let assistantConfig = {
+                    name: type === 'login' ? "Grok Login" : "Grok Registration",
+                    silenceTimeoutSeconds: 120, 
+                    maxDurationSeconds: 1800,
+                    transcriber: { provider: "deepgram", model: "nova-2", language: "en-IN" },
+                    voice: { provider: "11labs", voiceId: "burt" },
+                    model: {
+                        provider: "openai",
+                        model: "gpt-4-turbo",
+                        messages: [],
+                        tools: []
+                    }
+                };
+
+                if (type === 'login') {
+                    assistantConfig.firstMessage = "Grok Voice Login activated. Please slowly say your 12 digit Aadhar number.";
+                    assistantConfig.model.messages.push({
+                        role: "system",
+                        content: `You are Grok, handling worker login. Collect their 12-digit Aadhar number first. Then collect their password. Wait patiently. Once you have both, immediately trigger the 'login_worker' tool.`
+                    });
+                    assistantConfig.model.tools.push({
+                        type: "function",
+                        function: {
+                            name: "login_worker",
+                            description: "Log the worker in. Trigger only after collecting Aadhar and Password.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    aadhar: { type: "string" },
+                                    password: { type: "string" }
+                                },
+                                required: ["aadhar", "password"]
+                            }
+                        }
+                    });
+                } else {
+                    assistantConfig.firstMessage = "Grok Voice Registration activated. I need to collect a few details to create your account. Let's start with your 12-digit Aadhar number.";
+                    assistantConfig.model.messages.push({
+                        role: "system",
+                        content: `You are Grok, an onboarding AI. Collect these 5 things ONE AT A TIME: 1. Aadhar Number (12 digits) 2. A secure password 3. Full Name 4. Home Address 5. Phone Number 6. Job/Trade (e.g. Plumber). Wait patiently for answers. Once you have all 6 pieces of information, immediately trigger the 'register_worker' tool.`
+                    });
+                    assistantConfig.model.tools.push({
+                        type: "function",
+                        function: {
+                            name: "register_worker",
+                            description: "Register the worker. Trigger only after collecting all 6 fields.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    aadhar: { type: "string" },
+                                    password: { type: "string" },
+                                    name: { type: "string" },
+                                    phone: { type: "string" },
+                                    address: { type: "string" },
+                                    job: { type: "string" }
+                                },
+                                required: ["aadhar", "password", "name", "phone", "address", "job"]
+                            }
+                        }
+                    });
+                }
+
+                await vapi.start(assistantConfig);
+            };
+
+            const handleVoiceLogin = async (data, toolCallId, vapiInstance) => {
+                const cleanAadhar = data.aadhar.replace(/\D/g, '');
+                const cleanPass = data.password.replace(/\s/g, '').toLowerCase().replace(/\./g, '');
+                
+                try {
+                    const mappedEmail = `${cleanAadhar}@worker.vela.com`;
+                    await auth.signInWithEmailAndPassword(mappedEmail, cleanPass);
+                    // If successful, the auth listener will trigger and redirect the user automatically
+                } catch (error) {
+                    vapiInstance.send({
+                        type: 'tool-return', toolCallId: toolCallId,
+                        result: `Login failed. Tell the user the credentials were incorrect. Heard Aadhar: ${cleanAadhar}, Password: ${cleanPass}. Ask them to try again.`
+                    });
+                }
+            };
+
+            const handleVoiceRegistration = async (data, toolCallId, vapiInstance) => {
+                const cleanAadhar = data.aadhar.replace(/\D/g, '');
+                const cleanPass = data.password.replace(/\s/g, '').toLowerCase().replace(/\./g, '');
+                
+                try {
+                    const mappedEmail = `${cleanAadhar}@worker.vela.com`;
+                    const userCredential = await auth.createUserWithEmailAndPassword(mappedEmail, cleanPass);
+                    const user = userCredential.user;
+
+                    await db.ref('workers/' + user.uid).set({
+                        name: data.name,
+                        phone: data.phone,
+                        address: data.address,
+                        job: data.job,
+                        experience: '0-1 Years', // Default for voice
+                        aadhar: cleanAadhar,
+                        createdAt: firebase.database.ServerValue.TIMESTAMP
+                    });
+                    // Auth listener will handle the redirect
+                } catch (error) {
+                    vapiInstance.send({
+                        type: 'tool-return', toolCallId: toolCallId,
+                        result: "Registration failed, possibly due to a weak password or existing account. Ask them to try again."
+                    });
+                }
+            };
+
+            const stopVoiceCall = () => {
+                vapi.stop();
+                setCallStatus('inactive');
+                setAuthView('login');
+            };
+
+            // --- 4. MANUAL AUTHENTICATION LOGIC ---
             const switchAuthView = (view) => {
                 setAuthView(view);
                 setAadharLogin('');
@@ -112,10 +302,7 @@
 
             const handleSignup = async (e) => {
                 e.preventDefault();
-                if (signupData.aadhar.length !== 12) {
-                    alert("Aadhar Number must be exactly 12 digits.");
-                    return;
-                }
+                if (signupData.aadhar.length !== 12) { alert("Aadhar Number must be exactly 12 digits."); return; }
                 setIsLoading(true);
                 try {
                     const mappedEmail = `${signupData.aadhar}@worker.vela.com`;
@@ -154,143 +341,193 @@
                 auth.signOut();
             };
 
+            // --- 5. DASHBOARD LOGIC ---
             const acceptJob = async (reqId) => {
                 try {
                     await db.ref('requests/' + reqId).update({
-                        status: `Accepted by ${workerProfile.name}`,
+                        status: `Worker Assigned: ${workerProfile.name}`,
                         workerId: currentUser.uid,
                         workerPhone: workerProfile.phone
                     });
                     setHomeTab('my_jobs');
-                } catch (error) {
-                    alert("Error accepting job: " + error.message);
-                }
+                } catch (error) { alert("Error accepting job: " + error.message); }
             };
 
             const declineJob = async (reqId) => {
-                try {
-                    await db.ref(`requests/${reqId}/declinedBy/${currentUser.uid}`).set(true);
-                } catch (error) {
-                    alert("Error declining job: " + error.message);
-                }
+                try { await db.ref(`requests/${reqId}/declinedBy/${currentUser.uid}`).set(true); } 
+                catch (error) { alert("Error declining job: " + error.message); }
             };
 
             const handleCompletionFormChange = (reqId, field, value) => {
-                setCompletionForms(prev => ({
-                    ...prev,
-                    [reqId]: { ...prev[reqId], [field]: value }
-                }));
+                setCompletionForms(prev => ({ ...prev, [reqId]: { ...prev[reqId], [field]: value } }));
             };
 
             const completeJob = async (reqId) => {
                 const formData = completionForms[reqId];
-                
                 if (!formData || !formData.issueDetails || formData.issueDetails.trim() === '') {
                     alert("Please provide the details of what type of issue it was before completing the job.");
                     return;
                 }
-
                 try {
                     const finalStatus = formData.finalStatus || 'Job Completed Successfully';
-                    
                     await db.ref('requests/' + reqId).update({
                         status: finalStatus,
                         resolutionNote: formData.issueDetails,
                         completedAt: firebase.database.ServerValue.TIMESTAMP
                     });
-                    
                     setCompletionForms(prev => {
                         const newState = {...prev};
                         delete newState[reqId];
                         return newState;
                     });
-                    
-                } catch (error) {
-                    alert("Error completing job: " + error.message);
-                }
+                } catch (error) { alert("Error completing job: " + error.message); }
             };
+
+            // ==========================================
+            // UI RENDERING
+            // ==========================================
 
             if (isLoading) {
                 return <div className="min-h-screen flex items-center justify-center text-xl font-bold text-gray-500">Loading Application...</div>;
             }
 
+            // --- PRE-LOGIN AUTHENTICATION SCREENS ---
             if (!currentUser) {
+                
+                // GROK VOICE FULLSCREEN UI
+                if (authView === 'voice_auth') {
+                    return (
+                        <div className="min-h-screen bg-black flex flex-col max-w-3xl mx-auto p-6 h-screen max-h-screen">
+                            <header className="py-6 border-b border-gray-900 mb-4 flex justify-between items-center shrink-0">
+                                <h1 className="text-2xl font-extrabold tracking-widest text-white">VELA <span className="text-gray-600 font-normal">| Voice</span></h1>
+                                <button onClick={stopVoiceCall} className="text-xs bg-gray-900 text-gray-400 hover:text-white px-3 py-1 rounded-full border border-gray-800 transition">Cancel</button>
+                            </header>
+
+                            <div className="flex-1 overflow-y-auto mb-4 space-y-4 px-4 custom-scrollbar flex flex-col">
+                                {messages.map((msg, idx) => (
+                                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-[80%] rounded-2xl px-5 py-3 ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-900 text-gray-200 border border-gray-800'}`}>
+                                            <p className="text-sm">{msg.text}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                                <div ref={chatEndRef} />
+                            </div>
+
+                            <div className="shrink-0 flex flex-col items-center justify-center py-6 border-t border-gray-900">
+                                <button 
+                                    className={`relative flex items-center justify-center w-24 h-24 rounded-full transition-all duration-300
+                                        ${callStatus === 'active' ? 'bg-blue-600 shadow-[0_0_40px_rgba(37,99,235,0.6)] grok-pulse' : 'bg-gray-800'}`}
+                                >
+                                    <span className="text-4xl">🎤</span>
+                                    {callStatus === 'active' && (
+                                        <div className="absolute inset-0 bg-blue-500 rounded-full opacity-30" style={{ transform: `scale(${1 + volumeLevel * 1.5})`, transition: 'transform 0.1s ease-out' }}></div>
+                                    )}
+                                </button>
+                                <p className="mt-6 text-sm font-mono text-gray-500 uppercase tracking-widest">
+                                    {callStatus === 'loading' ? 'Connecting to Grok...' : 'Grok is listening...'}
+                                </p>
+                            </div>
+                        </div>
+                    );
+                }
+
+                // STANDARD LOGIN / SIGNUP UI
                 return (
                     <div className="min-h-screen flex items-center justify-center p-4 bg-gray-100">
-                        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border-t-8 border-green-600">
+                        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border-t-8 border-green-600 relative overflow-hidden">
                             <h1 className="text-3xl font-extrabold text-green-700 text-center mb-2 tracking-wide">VELA</h1>
                             <p className="text-center text-gray-500 font-bold mb-6">WORKER PORTAL</p>
                             
                             {authView === 'login' ? (
-                                <form onSubmit={handleLogin} className="space-y-4">
-                                    <div>
-                                        <label className="block text-xs font-bold text-gray-500 mb-1">Aadhar Number</label>
-                                        <input type="text" pattern="\d{12}" maxLength="12" required value={aadharLogin} placeholder="12-Digit Aadhar" onChange={(e) => setAadharLogin(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-green-500" />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-bold text-gray-500 mb-1">Password</label>
-                                        <input type="password" required value={password} placeholder="Password" onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-green-500" />
-                                    </div>
-                                    <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 shadow-md transition">Log In securely</button>
-                                    <p className="text-center text-sm text-gray-500 mt-4">
-                                        Not registered yet? <span onClick={() => switchAuthView('signup')} className="text-green-600 font-bold cursor-pointer hover:underline">Apply here</span>
-                                    </p>
-                                </form>
-                            ) : (
-                                <form onSubmit={handleSignup} className="space-y-3">
-                                    <div className="grid grid-cols-2 gap-3">
+                                <div className="animate-fade-in">
+                                    <form onSubmit={handleLogin} className="space-y-4">
                                         <div>
-                                            <label className="block text-xs font-bold text-gray-500 mb-1">12-Digit Aadhar</label>
-                                            <input type="text" pattern="\d{12}" maxLength="12" required value={signupData.aadhar} placeholder="000000000000" onChange={(e) => setSignupData({...signupData, aadhar: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                            <label className="block text-xs font-bold text-gray-500 mb-1">Aadhar Number</label>
+                                            <input type="text" pattern="\d{12}" maxLength="12" required value={aadharLogin} placeholder="12-Digit Aadhar" onChange={(e) => setAadharLogin(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-green-500" />
                                         </div>
                                         <div>
                                             <label className="block text-xs font-bold text-gray-500 mb-1">Password</label>
-                                            <input type="password" required value={password} placeholder="Min 6 chars" onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                            <input type="password" required value={password} placeholder="Password" onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none focus:ring-2 focus:ring-green-500" />
                                         </div>
-                                    </div>
-                                    <div className="border-t border-gray-200 my-2 pt-2"></div>
-                                    
-                                    <input type="text" required placeholder="Full Legal Name" onChange={(e) => setSignupData({...signupData, name: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
-                                    <input type="tel" required placeholder="Phone Number" onChange={(e) => setSignupData({...signupData, phone: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
-                                    <textarea required placeholder="Full Home Address" onChange={(e) => setSignupData({...signupData, address: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" rows="2"></textarea>
-                                    
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div>
-                                            <label className="block text-xs font-bold text-gray-500 mb-1">Your Trade / Skill</label>
-                                            <select required value={signupData.job} onChange={(e) => setSignupData({...signupData, job: e.target.value})} className="w-full border border-gray-300 rounded-lg p-3 bg-white outline-none">
-                                                <option value="Plumber">Plumber</option>
-                                                <option value="Electrician">Electrician</option>
-                                                <option value="Cleaner">Cleaner</option>
-                                                <option value="Carpenter">Carpenter</option>
-                                                <option value="Painter">Painter</option>
-                                                <option value="Appliance Repair">Appliance Repair</option>
-                                                <option value="Mason">Mason</option>
-                                                <option value="Other">Other</option>
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-gray-500 mb-1">Experience</label>
-                                            <select required value={signupData.experience} onChange={(e) => setSignupData({...signupData, experience: e.target.value})} className="w-full border border-gray-300 rounded-lg p-3 bg-white outline-none">
-                                                <option value="0-1 Years">0-1 Years</option>
-                                                <option value="2-4 Years">2-4 Years</option>
-                                                <option value="5+ Years">5+ Years</option>
-                                            </select>
-                                        </div>
+                                        <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 shadow-md transition">Log In manually</button>
+                                    </form>
+
+                                    <div className="mt-6 border-t border-gray-200 pt-6">
+                                        <button onClick={() => startVoiceAuth('login')} disabled={!vapi} className="w-full bg-black hover:bg-gray-900 text-white p-3 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg transition transform hover:scale-[1.02] disabled:opacity-50">
+                                            <span className="text-xl">✨</span> Grok Voice Login
+                                        </button>
                                     </div>
 
-                                    <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 shadow-md transition mt-2">Submit Registration</button>
+                                    <p className="text-center text-sm text-gray-500 mt-6">
+                                        Not registered yet? <span onClick={() => switchAuthView('signup')} className="text-green-600 font-bold cursor-pointer hover:underline">Apply here</span>
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="animate-fade-in">
+                                    <form onSubmit={handleSignup} className="space-y-3">
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-500 mb-1">12-Digit Aadhar</label>
+                                                <input type="text" pattern="\d{12}" maxLength="12" required value={signupData.aadhar} placeholder="000000000000" onChange={(e) => setSignupData({...signupData, aadhar: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-500 mb-1">Password</label>
+                                                <input type="password" required value={password} placeholder="Min 6 chars" onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                            </div>
+                                        </div>
+                                        <div className="border-t border-gray-200 my-2 pt-2"></div>
+                                        
+                                        <input type="text" required placeholder="Full Legal Name" onChange={(e) => setSignupData({...signupData, name: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                        <input type="tel" required placeholder="Phone Number" onChange={(e) => setSignupData({...signupData, phone: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" />
+                                        <textarea required placeholder="Full Home Address" onChange={(e) => setSignupData({...signupData, address: e.target.value})} className="w-full rounded-lg border p-3 bg-gray-50 outline-none" rows="2"></textarea>
+                                        
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-500 mb-1">Your Trade / Skill</label>
+                                                <select required value={signupData.job} onChange={(e) => setSignupData({...signupData, job: e.target.value})} className="w-full border border-gray-300 rounded-lg p-3 bg-white outline-none">
+                                                    <option value="Plumber">Plumber</option>
+                                                    <option value="Electrician">Electrician</option>
+                                                    <option value="Cleaner">Cleaner</option>
+                                                    <option value="Carpenter">Carpenter</option>
+                                                    <option value="Painter">Painter</option>
+                                                    <option value="Appliance Repair">Appliance Repair</option>
+                                                    <option value="Mason">Mason</option>
+                                                    <option value="Other">Other</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-500 mb-1">Experience</label>
+                                                <select required value={signupData.experience} onChange={(e) => setSignupData({...signupData, experience: e.target.value})} className="w-full border border-gray-300 rounded-lg p-3 bg-white outline-none">
+                                                    <option value="0-1 Years">0-1 Years</option>
+                                                    <option value="2-4 Years">2-4 Years</option>
+                                                    <option value="5+ Years">5+ Years</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg font-bold hover:bg-green-700 shadow-md transition mt-2">Submit Manual Registration</button>
+                                    </form>
+
+                                    <div className="mt-4 pt-4 border-t border-gray-200">
+                                        <button onClick={() => startVoiceAuth('signup')} disabled={!vapi} className="w-full bg-black hover:bg-gray-900 text-white p-3 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg transition transform hover:scale-[1.02] disabled:opacity-50">
+                                            <span className="text-xl">✨</span> Register via Voice
+                                        </button>
+                                    </div>
+
                                     <p className="text-center text-sm text-gray-500 mt-4">
                                         Already registered? <span onClick={() => switchAuthView('login')} className="text-green-600 font-bold cursor-pointer hover:underline">Log In</span>
                                     </p>
-                                </form>
+                                </div>
                             )}
                         </div>
                     </div>
                 );
             }
 
+            // --- POST-LOGIN DASHBOARD ---
             return (
-                <div className="min-h-screen bg-gray-100 flex flex-col w-full">
+                <div className="min-h-screen bg-gray-100 flex flex-col w-full animate-fade-in">
                     
                     <div className="bg-green-700 w-full relative z-20 shadow-md">
                         <div className="w-full px-6 py-4 flex justify-between items-center max-w-7xl mx-auto">
@@ -335,14 +572,20 @@
                                         <div key={req.id} className="bg-white border border-gray-200 rounded-2xl p-5 hover:shadow-lg transition relative overflow-hidden flex flex-col">
                                             <div className="flex justify-between items-start mb-3 border-b pb-3">
                                                 <div>
-                                                    <h4 className="font-extrabold text-xl text-gray-900">{req.customerName}</h4>
-                                                    <p className="text-xs text-gray-500 font-bold">Needs a {req.service} by {req.date}</p>
+                                                    <h4 className="font-extrabold text-xl text-gray-900">{req.customerName || "Customer"}</h4>
+                                                    <p className="text-xs text-gray-500 font-bold">Needs a {req.type || req.service} by {req.date}</p>
                                                 </div>
                                             </div>
                                             
                                             <p className="text-sm text-gray-800 mb-3 bg-gray-50 p-3 rounded-lg flex-1 border border-gray-100">
                                                 <strong>Details:</strong> {req.details}
                                             </p>
+
+                                            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 mb-4">
+                                                <p className="text-sm text-gray-800 mb-1"><strong>📍 Registered Address:</strong> <br/> {req.customerRegisteredAddress || "Not Provided"}</p>
+                                                <p className="text-sm text-gray-800 mb-1"><strong>📱 Phone:</strong> {req.customerPhone || "Not Provided"}</p>
+                                                <p className="text-xs text-gray-500 mt-2"><strong>GPS Scan:</strong> {req.location || "N/A"}</p>
+                                            </div>
 
                                             {req.imageUrl && (
                                                 <div className="mb-3">
@@ -351,8 +594,6 @@
                                                     </a>
                                                 </div>
                                             )}
-                                            
-                                            <p className="text-sm text-gray-600 mb-4"><strong>📍 Area:</strong> {req.locationArea}</p>
                                             
                                             <div className="flex gap-2 mt-auto">
                                                 <button onClick={() => declineJob(req.id)} className="w-1/3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition shadow-sm border border-gray-200 text-sm">
@@ -379,20 +620,20 @@
                                     myAcceptedJobs.map((req) => (
                                         <div key={req.id} className={`bg-white border-2 rounded-2xl p-6 shadow-sm relative overflow-hidden flex flex-col md:flex-row gap-6 ${req.status.includes('Completed') ? 'border-blue-200 opacity-90' : 'border-green-200'}`}>
                                             <div className="flex-1">
-                                                <h4 className="font-extrabold text-2xl text-gray-900 mb-1">{req.customerName}</h4>
+                                                <h4 className="font-extrabold text-2xl text-gray-900 mb-1">{req.customerName || "Customer"}</h4>
                                                 <span className={`px-3 py-1 text-xs font-bold rounded-full mb-4 inline-block ${req.status.includes('Completed') || req.status.includes('Could Not Fix') ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
                                                     {req.status}
                                                 </span>
                                                 
                                                 <p className="text-sm text-gray-600 mb-1"><strong>Date Needed:</strong> {req.date}</p>
-                                                <p className="text-sm text-gray-600 mb-1"><strong>Address:</strong> {req.address || 'Address not provided'}</p>
-                                                <p className="text-sm text-gray-600 mb-4"><strong>Customer Issue:</strong> {req.details}</p>
+                                                <p className="text-sm text-gray-600 mb-1"><strong>📍 Address:</strong> {req.customerRegisteredAddress || "Not Provided"}</p>
+                                                <p className="text-sm text-gray-600 mb-1"><strong>📱 Phone:</strong> {req.customerPhone || "Not Provided"}</p>
+                                                <p className="text-sm text-gray-600 mb-4 mt-3 p-3 bg-gray-50 rounded-lg border border-gray-100"><strong>Issue:</strong> {req.details}</p>
                                                 
                                                 {(req.status.includes('Completed') || req.status.includes('Could Not Fix') || req.status.includes('Requires Parts')) && (
                                                     <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mt-2">
                                                         <p className="text-xs font-bold text-blue-800 mb-1">Your Resolution Report:</p>
-                                                        {/* Fix for older test jobs that lack a report */}
-                                                        <p className="text-sm text-blue-900">{req.resolutionNote || "No report provided for this older job."}</p>
+                                                        <p className="text-sm text-blue-900">{req.resolutionNote || "No report provided."}</p>
                                                     </div>
                                                 )}
 
@@ -423,7 +664,7 @@
                                                     </div>
                                                 )}
                                             </div>
-
+                                            
                                             {req.imageUrl && (
                                                 <div className="md:w-1/3">
                                                     <img src={req.imageUrl} alt="Problem" className="w-full h-auto object-cover rounded-xl border border-gray-200" />
